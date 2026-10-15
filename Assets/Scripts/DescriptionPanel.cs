@@ -29,7 +29,7 @@ public class DescriptionPanel : MonoBehaviour
         if (isCase)
         {
             if (itemNameText != null) itemNameText.text = data.displayName;
-            if (descriptionText != null) descriptionText.text = data.observation;
+            if (descriptionText != null) descriptionText.text = CaseFileUI.ObservationWithNote(data);
             if (usageText != null) usageText.text = "";
         }
         else

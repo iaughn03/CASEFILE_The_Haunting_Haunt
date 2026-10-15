@@ -132,8 +132,17 @@ public class IntroSequence : MonoBehaviour
 
     private void EndIntro()
     {
-        IsPlaying = false;
         introPanel.SetActive(false);
+
+        // The case briefing comes next, on its own page (it stays in the Case File afterwards). The
+        // level stays frozen and input blocked until it is closed.
+        if (CaseFileUI.Instance != null && CaseFileUI.Instance.ShowIntroBriefing(AfterBriefing)) return;
+        AfterBriefing();
+    }
+
+    private void AfterBriefing()
+    {
+        IsPlaying = false;
 
         if (howToPlayScreen != null)
         {

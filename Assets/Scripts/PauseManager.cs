@@ -122,7 +122,7 @@ public class PauseManager : MonoBehaviour
         if (brightnessSlider != null)
         {
             brightnessSlider.value = brightness;
-            brightnessSlider.onValueChanged.AddListener(SetBrightness);
+            brightnessSlider.onValueChanged.AddListener(v => SettingsApplyBar.ShowPercent(brightnessText, v));
         }
 
         SetMasterVolume(masterVolume);
@@ -143,6 +143,11 @@ public class PauseManager : MonoBehaviour
         // A keybind button is waiting for a key: that key (Esc included) belongs to the rebind, not
         // to the menus - otherwise the Esc that cancels a rebind would close Settings too.
         if (SettingsPageBuilder.IsCapturingKey) return;
+        // Same for the Settings confirmation dialog: its Esc means "keep editing", nothing else.
+        if (SettingsApplyBar.OwnsEscape) return;
+        // The Case File sits over the bag, the pause menu or the Final Inspection and handles its own
+        // Esc; the bag key must not shut the bag out from under it either.
+        if (CaseFileUI.IsOpen) return;
 
         if (GameKeys.Down(GameKeys.Action.EvidenceBag))
         {
@@ -196,6 +201,11 @@ public class PauseManager : MonoBehaviour
             if (isBagOpen)
             {
                 ToggleBag();
+            }
+            else if (isPaused && settingsMenuUI != null && settingsMenuUI.activeSelf)
+            {
+                // Esc in Settings works like its Back button (and asks about unapplied changes).
+                CloseSettings();
             }
             else
             {
@@ -438,12 +448,12 @@ public class PauseManager : MonoBehaviour
         PlayerPrefs.Save();
     }
 
+    // Volumes reset right away; brightness only moves its slider (it takes effect on APPLY).
     public void ResetSettings()
     {
         SetMasterVolume(1f);
         SetMusicVolume(1f);
         SetSFXVolume(1f);
-        SetBrightness(0.7f);
 
         if (masterVolumeSlider != null)
             masterVolumeSlider.value = 1f;
@@ -456,6 +466,20 @@ public class PauseManager : MonoBehaviour
 
         if (brightnessSlider != null)
             brightnessSlider.value = 0.7f;
+    }
+
+    // Volume sliders apply as they move. Brightness only updates its percentage (see Start) until
+    // SettingsApplyBar applies or reverts it.
+    public bool BrightnessPending => SettingsApplyBar.SliderDiffers(brightnessSlider, PlayerPrefs.GetFloat("Brightness", 0.7f));
+
+    public void ApplyPendingBrightness()
+    {
+        if (brightnessSlider != null) SetBrightness(brightnessSlider.value);
+    }
+
+    public void RevertPendingBrightness()
+    {
+        SettingsApplyBar.ShowSlider(brightnessSlider, brightnessText, PlayerPrefs.GetFloat("Brightness", 0.7f));
     }
 
     public void OpenControls()
@@ -538,6 +562,8 @@ public class PauseManager : MonoBehaviour
 
     public void CloseSettings()
     {
+        // Unapplied changes: ask to apply or discard first; the dialog comes back here once answered.
+        if (SettingsApplyBar.InterceptClose(settingsMenuUI, CloseSettings)) return;
         settingsMenuUI.SetActive(false);
         pauseMenuUI.SetActive(true);
     }

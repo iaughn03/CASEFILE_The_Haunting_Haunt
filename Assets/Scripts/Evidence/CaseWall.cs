@@ -310,12 +310,40 @@ public class CaseWall : MonoBehaviour
         if (link != null) madeLinks.Add(link);
         else wrongPairs.Add((from.data, target.data));
 
+        PinLine(line, from, target);
+        if (link != null) AddProofTag(from, target, link.proves);
+        Play(FinalInspectionArt.Pin(), 0.8f);
+        LinksChanged?.Invoke();
+    }
+
+    private void PinLine(RectTransform line, Card from, Card target)
+    {
         line.SetParent(stringsLayer, false);
         UpdateString(line, from.pin.position, target.pin.position);
         spawned.Add(line.gameObject);
         line.name = "String_" + from.data.displayName + "_" + target.data.displayName;
-        if (link != null) AddProofTag(from, target, link.proves);
-        Play(FinalInspectionArt.Pin(), 0.8f);
+    }
+
+    // Puts back strings pinned on an earlier visit, after the board had to be rebuilt (the player left
+    // the inspection and found more clues). Quietly, with their proof tags, right and wrong alike; a
+    // pair whose cards are no longer both on the board is skipped.
+    public void RestoreStrings(List<CaseLinkSet.Link> links, List<(EvidenceData a, EvidenceData b)> wrong)
+    {
+        foreach (var l in links)
+        {
+            Card a = cards.Find(c => c.data == l.clueA), b = cards.Find(c => c.data == l.clueB);
+            if (a == null || b == null || madeLinks.Contains(l)) continue;
+            madeLinks.Add(l);
+            PinLine(NewString("String"), a, b);
+            AddProofTag(a, b, l.proves);
+        }
+        foreach (var w in wrong)
+        {
+            Card a = cards.Find(c => c.data == w.a), b = cards.Find(c => c.data == w.b);
+            if (a == null || b == null || wrongPairs.Contains(w)) continue;
+            wrongPairs.Add(w);
+            PinLine(NewString("String"), a, b);
+        }
         LinksChanged?.Invoke();
     }
 
@@ -368,28 +396,33 @@ public class CaseWall : MonoBehaviour
         rt.localPosition = pos;
         rt.localRotation = Quaternion.Euler(0f, 0f, ((tagRects.Count * 37) % 5 - 2) * 0.8f);
 
-        tagRects.Add(new Rect(pos - size * 0.5f, size));
+        var tagRect = new Rect(pos - size * 0.5f, size);
+        tagRects.Add(tagRect);
         spawned.Add(plate.gameObject);
+        TieTagToString(parent, tagRect, pa, pb);
     }
 
-    // Tries spots along the string and a little to either side of it, and keeps the one covering the
-    // least of the cards, the victim's photo and earlier tags (ties go to the spot nearest the middle).
+    // Tries spots along the string and out to either side of it, and keeps the one covering the least
+    // of the cards, their pins, the victim's photo and earlier tags. A crowded wall often has no clear
+    // spot right on the string, so the search reaches out into the open gaps between the cards; among
+    // clear spots the one nearest the string wins.
     private Vector2 ProofTagSpot(RectTransform parent, Vector2 pa, Vector2 pb, Vector2 size)
     {
         var blockers = new List<Rect>(tagRects);
         foreach (var c in cards) blockers.Add(LocalBounds(parent, c.rect));
         if (photoRect != null) blockers.Add(LocalBounds(parent, photoRect));
+        // a tag over a pin hides which card the string starts from, so pins count several times over
+        var pins = new List<Rect>();
+        foreach (var c in cards) { var r = LocalBounds(parent, c.pin); pins.Add(new Rect(r.position - Vector2.one * 4f, r.size + Vector2.one * 8f)); }
 
         Rect board = parent.rect;
         Vector2 dir = pb - pa;
         Vector2 side = dir.sqrMagnitude > 0.01f ? new Vector2(-dir.y, dir.x).normalized : Vector2.up;
-        float[] along = { 0.5f, 0.42f, 0.58f, 0.34f, 0.66f, 0.26f, 0.74f };
-        float[] across = { 0f, 45f, -45f, 90f, -90f };
 
         Vector2 best = Vector2.Lerp(pa, pb, 0.5f);
         float bestCost = float.MaxValue;
-        foreach (float t in along)
-            foreach (float off in across)
+        for (float t = 0.15f; t <= 0.851f; t += 0.05f)
+            for (float off = -240f; off <= 240.1f; off += 15f)
             {
                 Vector2 p = Vector2.Lerp(pa, pb, t) + side * off;
                 p.x = Mathf.Clamp(p.x, board.xMin + size.x * 0.5f + 6f, board.xMax - size.x * 0.5f - 6f);
@@ -397,10 +430,64 @@ public class CaseWall : MonoBehaviour
                 var r = new Rect(p - size * 0.5f, size);
                 float cost = 0f;
                 foreach (var o in blockers) cost += OverlapArea(r, o);
-                cost += (Mathf.Abs(t - 0.5f) * 40f + Mathf.Abs(off) * 0.2f);
+                foreach (var o in pins) cost += OverlapArea(r, o) * 6f;
+                cost += RectToSegment(r, pa, pb, out _) * 2f + Mathf.Abs(t - 0.5f) * 40f;
                 if (cost < bestCost) { bestCost = cost; best = p; }
             }
         return best;
+    }
+
+    // A tag pushed off its string gets a short thread back to it, so it still reads as that string's tag.
+    private void TieTagToString(RectTransform parent, Rect tag, Vector2 pa, Vector2 pb)
+    {
+        if (RectToSegment(tag, pa, pb, out Vector2 onString) < 4f) return;
+        Vector2 onTag = new Vector2(Mathf.Clamp(onString.x, tag.xMin + 8f, tag.xMax - 8f),
+                                    Mathf.Clamp(onString.y, tag.yMin + 4f, tag.yMax - 4f));
+        var thread = NewString("ProofThread");
+        thread.GetComponent<Image>().color = new Color(stringColor.r * 0.8f, stringColor.g * 0.8f, stringColor.b * 0.8f, 0.85f);
+        UpdateString(thread, parent.TransformPoint(onString), parent.TransformPoint(onTag));
+        thread.sizeDelta = new Vector2(thread.sizeDelta.x, Mathf.Max(1.5f, stringThickness * 0.4f));
+        spawned.Add(thread.gameObject);
+    }
+
+    // Gap between a rect and the segment a to b (0 when the segment runs through it), plus the point on
+    // the segment nearest the rect's centre.
+    private static float RectToSegment(Rect r, Vector2 a, Vector2 b, out Vector2 nearest)
+    {
+        Vector2 ab = b - a;
+        float t = ab.sqrMagnitude > 0.01f ? Mathf.Clamp01(Vector2.Dot(r.center - a, ab) / ab.sqrMagnitude) : 0f;
+        nearest = a + ab * t;
+
+        // the segment runs through the rect: clip it against the rect's x and y slabs
+        float t0 = 0f, t1 = 1f;
+        if (Clip(-ab.x, a.x - r.xMin, ref t0, ref t1) && Clip(ab.x, r.xMax - a.x, ref t0, ref t1) &&
+            Clip(-ab.y, a.y - r.yMin, ref t0, ref t1) && Clip(ab.y, r.yMax - a.y, ref t0, ref t1))
+            return 0f;
+
+        // otherwise the gap is set by an end of the segment or a corner of the rect
+        float best = Mathf.Min(PointToRect(a, r), PointToRect(b, r));
+        foreach (var c in new[] { r.min, r.max, new Vector2(r.xMin, r.yMax), new Vector2(r.xMax, r.yMin) })
+        {
+            float s = ab.sqrMagnitude > 0.01f ? Mathf.Clamp01(Vector2.Dot(c - a, ab) / ab.sqrMagnitude) : 0f;
+            best = Mathf.Min(best, Vector2.Distance(c, a + ab * s));
+        }
+        return best;
+    }
+
+    private static bool Clip(float p, float q, ref float t0, ref float t1)
+    {
+        if (Mathf.Abs(p) < 1e-6f) return q >= 0f;
+        float t = q / p;
+        if (p < 0f) { if (t > t1) return false; if (t > t0) t0 = t; }
+        else { if (t < t0) return false; if (t < t1) t1 = t; }
+        return true;
+    }
+
+    private static float PointToRect(Vector2 p, Rect r)
+    {
+        float dx = Mathf.Max(r.xMin - p.x, 0f, p.x - r.xMax);
+        float dy = Mathf.Max(r.yMin - p.y, 0f, p.y - r.yMax);
+        return Mathf.Sqrt(dx * dx + dy * dy);
     }
 
     private static Rect LocalBounds(RectTransform space, RectTransform rt)
@@ -480,7 +567,7 @@ public class CaseWall : MonoBehaviour
 }
 
 // Sits on each pinned clue card and forwards drag events to the wall.
-public class WallCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
+public class WallCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IPointerClickHandler
 {
     private CaseWall wall;
     public EvidenceData Data { get; private set; }
@@ -494,4 +581,12 @@ public class WallCard : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDrag
     public void OnBeginDrag(PointerEventData e) { if (wall != null) wall.BeginString(this, e.position); }
     public void OnDrag(PointerEventData e) { if (wall != null) wall.DragString(e.position); }
     public void OnEndDrag(PointerEventData e) { if (wall != null) wall.EndString(e.position); }
+
+    // A click with no drag (the event system stops counting it as a click once a drag starts) opens
+    // this clue's page in the Case File, so it can be reread while deciding what it links to.
+    public void OnPointerClick(PointerEventData e)
+    {
+        if (e.dragging || Data == null || CaseFileUI.Instance == null) return;
+        CaseFileUI.Instance.OpenClue(Data);
+    }
 }

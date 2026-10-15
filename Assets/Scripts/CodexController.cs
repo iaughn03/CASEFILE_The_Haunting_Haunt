@@ -12,6 +12,10 @@ public class CodexController : MonoBehaviour
     {
         public string term;
         [TextArea] public string definition;
+        [Tooltip("Left empty, the entry is always readable. Set to a level scene name, it stays locked until LevelProgress marks that level solved (a case page that would give the answer away).")]
+        public string unlockedBySolvedScene;
+        [Tooltip("Shown instead of the definition while the entry is locked.")]
+        [TextArea] public string lockedDefinition;
     }
 
     public Entry[] entries;
@@ -49,8 +53,12 @@ public class CodexController : MonoBehaviour
     {
         if (entries == null || entries.Length == 0) return;
 
-        if (termText != null) termText.text = entries[index].term;
-        if (definitionText != null) definitionText.text = entries[index].definition;
+        Entry e = entries[index];
+        bool locked = !string.IsNullOrEmpty(e.unlockedBySolvedScene) && !LevelProgress.IsSolved(e.unlockedBySolvedScene);
+        if (termText != null) termText.text = e.term;
+        if (definitionText != null)
+            definitionText.text = !locked ? e.definition
+                : (string.IsNullOrWhiteSpace(e.lockedDefinition) ? "Solve this case to open this page." : e.lockedDefinition);
         if (pageIndicatorText != null) pageIndicatorText.text = $"{index + 1} / {entries.Length}";
     }
 }

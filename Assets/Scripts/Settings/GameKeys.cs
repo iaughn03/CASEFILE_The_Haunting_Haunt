@@ -66,6 +66,7 @@ public static class GameKeys
     public static string Label(Action a) => defs[a].label;
 
     // Binding a key that another action already uses swaps the two, so no key is ever bound twice.
+    // Settings > Keybinds only edits the bindings; Save() (APPLY) keeps them and tells the prompts.
     public static void Set(Action a, KeyCode key)
     {
         EnsureLoaded();
@@ -75,24 +76,47 @@ public static class GameKeys
         {
             if (other == a || current[other] != key) continue;
             current[other] = old;
-            PlayerPrefs.SetInt("Key_" + other, (int)old);
         }
         current[a] = key;
-        PlayerPrefs.SetInt("Key_" + a, (int)key);
+    }
+
+    public static void Save()
+    {
+        EnsureLoaded();
+        foreach (var kv in current) PlayerPrefs.SetInt("Key_" + kv.Key, (int)kv.Value);
         PlayerPrefs.Save();
         Changed?.Invoke();
     }
 
-    public static void ResetToDefaults()
+    // Every binding at one moment, so the Settings screen can put them back when the player discards
+    // changes they never applied (see SettingsApplyBar).
+    public static Dictionary<Action, KeyCode> Capture()
     {
         EnsureLoaded();
-        foreach (var kv in defs)
-        {
-            current[kv.Key] = kv.Value.key;
-            PlayerPrefs.DeleteKey("Key_" + kv.Key);
-        }
-        PlayerPrefs.Save();
-        Changed?.Invoke();
+        return new Dictionary<Action, KeyCode>(current);
+    }
+
+    public static bool Matches(Dictionary<Action, KeyCode> saved)
+    {
+        EnsureLoaded();
+        foreach (var kv in current)
+            if (!saved.TryGetValue(kv.Key, out var k) || k != kv.Value) return false;
+        return true;
+    }
+
+    // Puts every binding back at once (one by one through Set would swap keys around on the way).
+    public static void Restore(Dictionary<Action, KeyCode> saved)
+    {
+        EnsureLoaded();
+        foreach (var kv in saved) current[kv.Key] = kv.Value;
+    }
+
+    // apply false only edits the bindings (the Settings reset button: they take effect on APPLY).
+    public static void ResetToDefaults(bool apply = true)
+    {
+        EnsureLoaded();
+        foreach (var kv in defs) current[kv.Key] = kv.Value.key;
+        if (apply) Save();
     }
 
     public static bool Held(Action a)

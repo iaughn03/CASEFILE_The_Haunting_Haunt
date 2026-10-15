@@ -36,6 +36,11 @@ public class DraggableItem : MonoBehaviour,
     [HideInInspector]
     public GameObject sourceWorldObject;
 
+    // Scene evidence that stays in the world (EvidenceItem.keepInWorld) has no sourceWorldObject to
+    // borrow or drop, so the 3D view shows a copy of this object instead (ItemInspection3D.InspectCopy).
+    [HideInInspector]
+    public GameObject inspectCopySource;
+
     private Transform originalSlotParent;
     private Canvas mainCanvas;
     private CanvasGroup canvasGroup;
@@ -249,15 +254,24 @@ public class DraggableItem : MonoBehaviour,
             panel.ShowItem(this);
         }
 
-        if (sourceWorldObject != null && ItemInspection3D.Instance != null)
-        {
-            ItemInspection3D.Instance.Inspect(sourceWorldObject, itemName);
-        }
+        ShowIn3D();
+    }
+
+    // Always replaces what the 3D view shows: with nothing of this item's to put on the stage it is
+    // cleared, rather than leaving the previously clicked item up under this item's details.
+    void ShowIn3D()
+    {
+        ItemInspection3D view = ItemInspection3D.Instance;
+        if (view == null) return;
+
+        if (sourceWorldObject != null) view.Inspect(sourceWorldObject, itemName);
+        else if (inspectCopySource != null) view.InspectCopy(inspectCopySource, itemName);
+        else view.StopInspecting();
     }
 
     // A note back in the bag after reading: case notes get their Observation in the detail panel
-    // (a plain note's full text would just be cramped in there), and every note shows its paper in
-    // the 3D inspection panel like any other item.
+    // (a plain note's full text would just be cramped in there), and the inspection panel shows the
+    // same page the reader just showed, writing included.
     void ShowNoteInBag()
     {
         if (this == null) return;
@@ -268,7 +282,8 @@ public class DraggableItem : MonoBehaviour,
             if (panel != null) panel.ShowItem(this);
         }
 
-        if (sourceWorldObject != null && ItemInspection3D.Instance != null)
-            ItemInspection3D.Instance.Inspect(sourceWorldObject, itemName);
+        if (ItemInspection3D.Instance == null) return;
+        if (ItemInspection3D.Instance.InspectNote(itemDescription, itemName)) return;
+        ShowIn3D();
     }
 }

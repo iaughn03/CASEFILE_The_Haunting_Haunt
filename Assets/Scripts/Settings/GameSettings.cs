@@ -125,7 +125,8 @@ public static class GameSettings
         PlayerPrefs.Save();
     }
 
-    // Called by the settings pages after any change.
+    // The settings pages only edit the fields above; this (APPLY, via SettingsApplyBar) saves them
+    // and makes them take effect.
     public static void Commit()
     {
         Save();
@@ -135,13 +136,56 @@ public static class GameSettings
         Changed?.Invoke();
     }
 
-    public static void ResetToDefaults()
+    // Every option at one moment, so the Settings screen can put things back when the player
+    // discards changes they never applied (see SettingsApplyBar).
+    public struct State
+    {
+        public int resW, resH;
+        public WindowMode window;
+        public float fov;
+        public bool showFps;
+        public Preset preset;
+        public float renderScale;
+        public AntiAliasing aa;
+        public ShadowQuality shadows;
+        public TextureQuality textures;
+        public bool post;
+        public GrassQuality grass;
+        public float mouse;
+        public bool invertY;
+
+        public bool DisplayEquals(State o) => resW == o.resW && resH == o.resH && window == o.window && fov == o.fov && showFps == o.showFps;
+        public bool GraphicsEquals(State o) => preset == o.preset && renderScale == o.renderScale && aa == o.aa && shadows == o.shadows && textures == o.textures && post == o.post && grass == o.grass;
+        public bool ControlsEquals(State o) => mouse == o.mouse && invertY == o.invertY;
+    }
+
+    public static State Capture()
+    {
+        Load();
+        return new State
+        {
+            resW = ResolutionWidth, resH = ResolutionHeight, window = Window, fov = FieldOfView, showFps = ShowFps,
+            preset = QualityPreset, renderScale = RenderScale, aa = AA, shadows = Shadows, textures = Textures, post = PostProcessing, grass = Grass,
+            mouse = MouseSensitivity, invertY = InvertY,
+        };
+    }
+
+    public static void Restore(State s, bool apply = true)
+    {
+        ResolutionWidth = s.resW; ResolutionHeight = s.resH; Window = s.window; FieldOfView = s.fov; ShowFps = s.showFps;
+        QualityPreset = s.preset; RenderScale = s.renderScale; AA = s.aa; Shadows = s.shadows; Textures = s.textures; PostProcessing = s.post; Grass = s.grass;
+        MouseSensitivity = s.mouse; InvertY = s.invertY;
+        if (apply) Commit();
+    }
+
+    // apply false only edits the values (the Settings reset button: they take effect on APPLY).
+    public static void ResetToDefaults(bool apply = true)
     {
         ResolutionWidth = 0; ResolutionHeight = 0;
         Window = WindowMode.Fullscreen; FieldOfView = 60f; ShowFps = false;
         MouseSensitivity = 2f; InvertY = false;
         SetPreset(Preset.High);
-        Commit();
+        if (apply) Commit();
     }
 
     // ------------------------------------------------------------------ presets

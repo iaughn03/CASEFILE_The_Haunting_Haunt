@@ -25,6 +25,14 @@ public class GhostController : MonoBehaviour
     public float roamWaitTime = 3f;
     public float roamWaitTimeJitter = 1.5f;
 
+    [Header("Hunting: her wandering keeps to the player's part of the map instead of all of it")]
+    [Tooltip("Chance each new roam spot is picked near the player rather than near herself. 0 = old fully random wandering (Game1). Game2 and Game3 use 0.7: their NavMesh spreads over several houses and a big yard, so plain random wandering rarely brought her near the player.")]
+    [Range(0f, 1f)] public float huntChance = 0f;
+    [Tooltip("Hunting roam spots are this far from the player at most.")]
+    public float huntRadius = 12f;
+    [Tooltip("...and at least this far, so she patrols around the player instead of walking straight onto them. She still has to actually see them to give chase.")]
+    public float huntMinDistance = 4f;
+
     [Header("Searching")]
     public float searchDuration = 4f;
     public float searchTurnSpeed = 80f;
@@ -63,8 +71,8 @@ public class GhostController : MonoBehaviour
     public float attackHitWindow = 0.45f;
     [Tooltip("Total arc in front of her the swing can reach, in degrees. Without this the damage check was pure distance, so she could hit a player standing directly behind her.")]
     [Range(30f, 360f)] public float attackArcAngle = 150f;
-    [Tooltip("How far above her pivot the player's pivot can be and still be hit. The player's pivot sits 1 to 1.25m above whatever they stand on, so the default covers someone up on a table, bed or crate (Game1's tables are ~1.2m: 2.4 measured) but not someone on the floor above (3.75m+ higher).")]
-    public float attackMaxHeightAbove = 3.0f;
+    [Tooltip("How far above her pivot the player's pivot can be and still be hit. The player's pivot sits 1 to 1.25m above whatever they stand on, so 3.5 covers someone up on a table, bed, counter or crate up to ~2.3m tall (Game3's 2x furniture included) but not someone on the floor above (Game2's upper floor puts the pivot ~4.8m higher).")]
+    public float attackMaxHeightAbove = 3.5f;
     [Tooltip("The player's usual pivot height over her feet when both stand on the same floor. Vertical offset beyond this (standing up on furniture) is ignored by the attack range, so climbing onto a table is no longer a safe spot.")]
     public float playerStandingHeight = 1.0f;
     public float attackDamage = 15f;
@@ -76,6 +84,17 @@ public class GhostController : MonoBehaviour
     public AudioClip[] killClips;
     [Range(0f, 1f)] [Tooltip("Separate volume multiplier for attack/kill clips specifically, on top of the master SFX slider - the point-blank scream was playing at full, unattenuated blast.")]
     public float attackVolume = 0.65f;
+
+    [Header("Out of Reach: the player is perched where her swing can't land (tall furniture, a ledge)")]
+    [Tooltip("How long she may stand at the foot of a perch, unable to swing, before she starts circling it. Before this she stood there in her run pose forever, which read as her freezing.")]
+    public float outOfReachDelay = 0.5f;
+    [Tooltip("How long she circles below a player she can't reach before giving up and wandering off.")]
+    public float outOfReachGiveUpTime = 10f;
+    [Tooltip("After giving up she ignores a player who is still perched out of reach for this long, so she doesn't walk straight back and stand under them again.")]
+    public float outOfReachIgnoreTime = 8f;
+    [Tooltip("Furthest she paces from the spot under the player while circling.")]
+    public float prowlRadius = 3f;
+    public float prowlSpeed = 2.4f;
 
     [Header("Obstacle Vaulting - crosses the same low obstacles the player can jump, so vaulting one\n     never buys a clean escape")]
     public LayerMask vaultObstacleLayer;
@@ -167,6 +186,14 @@ public class GhostController : MonoBehaviour
     private float nextStalkClipTime;
     private int escalationStacks;
     private readonly RaycastHit[] litProbeHits = new RaycastHit[8]; // reused by IsLitByFlashlight() so the per-frame beam check doesn't allocate
+    private bool isProwling; // Chasing, but circling below a player she can't reach (see ProwlBelowUnreachablePlayer)
+    private float outOfReachTimer;
+    private float prowlTimer;
+    private float prowlPauseUntil;
+    private float nextReachCheckTime;
+    private float ignorePerchedUntil;
+    private NavMeshPath reachTestPath;
+    private NavMeshPath chasePath;
 
     // Lets external systems (ambient/proximity layers) back off while she's an active threat instead
     // of stacking on top of it and diluting the signal.
@@ -285,6 +312,8 @@ public class GhostController : MonoBehaviour
         switch (state)
         {
             case State.Roaming:
+                // Just gave up on a player perched out of her reach: don't charge straight back under them.
+                if (seesPlayer && IgnoringPerchedPlayer()) seesPlayer = false;
                 if (isGlimpsing)
                 {
                     HoldGlimpse();
@@ -311,8 +340,11 @@ public class GhostController : MonoBehaviour
                 // the flashlight slow multiplier below compounds onto an already-slowed value each frame
                 // it stays lit, converging to a near-total freeze within a few frames instead of a flat 0.4x.
                 agent.speed = currentChaseSpeed;
-                RepathTowardPlayer();
                 ApplyChaseInterference();
+                // Perched out of reach: she circles below instead of the normal pursuit, and knows
+                // where the player is the whole time, so the lose-sight countdown is skipped too.
+                if (ProwlBelowUnreachablePlayer()) break;
+                RepathTowardPlayer();
                 UpdateChaseStallWatchdog();
 
                 if (seesPlayer)
@@ -516,11 +548,143 @@ public class GhostController : MonoBehaviour
     // spot in tight/cluttered rooms, producing a partial path that leaves her stuck a step from her
     // spawn instead of actually closing in. Snapping to the nearest real navmesh point first keeps
     // the destination on solid, walkable ground regardless of exactly where the player's pivot sits.
+    // Sampled from the player's feet, and never from a floor above them: up on tall furniture the
+    // nearest NavMesh in plain 3D can be the storey overhead, which sent her upstairs, away from them.
     Vector3 GetPlayerNavTarget()
     {
-        if (NavMesh.SamplePosition(player.position, out NavMeshHit hit, 3f, NavMesh.AllAreas))
+        Vector3 feet = PlayerFeet();
+        if (NavMesh.SamplePosition(feet, out NavMeshHit hit, 3f, NavMesh.AllAreas) && hit.position.y <= feet.y + 0.6f)
+            return hit.position;
+        // Perched well above any walkable floor (a tall shelf, a wardrobe, a roof): look further down.
+        // The raw off-mesh pivot used to go straight to SetDestination, which fails, so she never moved again.
+        if (NavMesh.SamplePosition(feet + Vector3.down * 2.5f, out hit, 3f, NavMesh.AllAreas) && hit.position.y <= feet.y + 0.6f)
+            return hit.position;
+        if (NavMesh.SamplePosition(player.position, out hit, 8f, NavMesh.AllAreas))
             return hit.position;
         return player.position;
+    }
+
+    Vector3 PlayerFeet() => player.position - Vector3.up * playerStandingHeight;
+
+    // True when the player stands on floor she can walk to, rather than up on furniture or a ledge
+    // with no NavMesh under them.
+    bool PlayerOnWalkableGround()
+    {
+        Vector3 feet = PlayerFeet();
+        if (!NavMesh.SamplePosition(feet, out NavMeshHit hit, 1f, NavMesh.AllAreas)) return false;
+        Vector3 off = hit.position - feet;
+        return Mathf.Abs(off.y) <= 0.8f && off.x * off.x + off.z * off.z <= 0.36f;
+    }
+
+    bool PlayerReachable()
+    {
+        if (!PlayerOnWalkableGround()) return false;
+        if (reachTestPath == null) reachTestPath = new NavMeshPath();
+        return agent.CalculatePath(GetPlayerNavTarget(), reachTestPath) && reachTestPath.status == NavMeshPathStatus.PathComplete;
+    }
+
+    bool IgnoringPerchedPlayer() => Time.time < ignorePerchedUntil && !PlayerOnWalkableGround();
+
+    // Runs inside Chasing, after the attack check. The chase walks her to the floor spot nearest the
+    // player; if the player is perched where her swing can't land, she used to arrive there and simply
+    // stop, still in her run pose, for good. Now, once she's stood there briefly, she circles below and
+    // looks up at them, swings the moment they're in reach (Chasing's attack check still runs every
+    // frame), drops back into the normal chase once they're on walkable ground, and gives up after
+    // outOfReachGiveUpTime. Returns true while it owns her movement this frame.
+    bool ProwlBelowUnreachablePlayer()
+    {
+        if (!isProwling)
+        {
+            bool standingOff = !agent.pathPending
+                && agent.velocity.sqrMagnitude < 0.05f
+                && agent.remainingDistance <= agent.stoppingDistance + 0.5f;
+            if (!standingOff || (agent.pathStatus == NavMeshPathStatus.PathComplete && PlayerOnWalkableGround()))
+            {
+                outOfReachTimer = 0f;
+                return false;
+            }
+            outOfReachTimer += Time.deltaTime;
+            if (outOfReachTimer < outOfReachDelay) return false;
+
+            isProwling = true;
+            prowlTimer = 0f;
+            nextReachCheckTime = Time.time + 0.5f;
+            agent.autoBraking = true;
+            agent.stoppingDistance = 0.2f;
+            PickProwlPoint();
+        }
+
+        if (Time.time >= nextReachCheckTime)
+        {
+            nextReachCheckTime = Time.time + 0.5f;
+            if (PlayerReachable())
+            {
+                StopProwling();
+                return false;
+            }
+        }
+
+        prowlTimer += Time.deltaTime;
+        if (prowlTimer >= outOfReachGiveUpTime)
+        {
+            ignorePerchedUntil = Time.time + outOfReachIgnoreTime;
+            PlayRandomClip(oneShotSource, loseTrackClips);
+            EnterRoam();
+            return true;
+        }
+
+        agent.speed = prowlSpeed;
+        bool arrived = !agent.pathPending && agent.remainingDistance <= agent.stoppingDistance + 0.1f;
+        if (!arrived)
+        {
+            agent.updateRotation = true;
+            return true;
+        }
+
+        // Paused between laps, staring up at them.
+        if (prowlPauseUntil <= 0f) prowlPauseUntil = Time.time + Random.Range(0.4f, 1.1f);
+        agent.updateRotation = false;
+        Vector3 lookDir = player.position - transform.position;
+        lookDir.y = 0f;
+        if (lookDir.sqrMagnitude > 0.001f)
+            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(lookDir), Time.deltaTime * 6f);
+        if (Time.time >= prowlPauseUntil) PickProwlPoint();
+        return true;
+    }
+
+    // A walkable spot on a ring around the floor under the player. Kept outside minPhysicalDistance so
+    // EnforceMinDistance() doesn't shove her off it every frame.
+    void PickProwlPoint()
+    {
+        prowlPauseUntil = 0f;
+        Vector3 under = new Vector3(player.position.x, transform.position.y, player.position.z);
+        float minR = Mathf.Max(1.5f, minPhysicalDistance + 0.3f);
+        float maxR = Mathf.Max(minR + 0.5f, prowlRadius);
+        if (reachTestPath == null) reachTestPath = new NavMeshPath();
+        for (int i = 0; i < 8; i++)
+        {
+            Vector2 r = Random.insideUnitCircle.normalized * Random.Range(minR, maxR);
+            Vector3 p = under + new Vector3(r.x, 0f, r.y);
+            if (!NavMesh.SamplePosition(p, out NavMeshHit hit, 1.5f, NavMesh.AllAreas)) continue;
+            if ((hit.position - transform.position).sqrMagnitude < 0.5f) continue;
+            if (!agent.CalculatePath(hit.position, reachTestPath) || reachTestPath.status != NavMeshPathStatus.PathComplete) continue;
+            agent.SetPath(reachTestPath);
+            return;
+        }
+        // Nowhere to pace (a cramped corner): stay put and keep facing them until the next try.
+        agent.ResetPath();
+    }
+
+    void StopProwling()
+    {
+        isProwling = false;
+        outOfReachTimer = 0f;
+        prowlPauseUntil = 0f;
+        agent.speed = currentChaseSpeed;
+        agent.stoppingDistance = ChaseStoppingDistance;
+        agent.autoBraking = false;
+        agent.updateRotation = true;
+        nextChaseRepathTime = 0f;
     }
 
     // SetDestination() kicks off an async path query. Calling it fresh every single Update() frame
@@ -545,20 +709,60 @@ public class GhostController : MonoBehaviour
         offMesh.y = 0f;
         agent.stoppingDistance = offMesh.sqrMagnitude > 0.25f ? 0.2f : ChaseStoppingDistance;
 
-        agent.SetDestination(target);
+        SetPathTo(target);
         lastChaseDestination = target;
-        nextChaseRepathTime = Time.time + 0.2f;
+        // An unreachable target (a roof, the top of tall furniture) won't become reachable by asking
+        // again every 0.2s; only refresh it now and then in case a door was unlocked.
+        nextChaseRepathTime = Time.time + (agent.pathStatus == NavMeshPathStatus.PathComplete ? 0.2f : 1.5f);
+    }
+
+    // Synchronous on purpose. SetDestination() is answered over several frames and drops her current
+    // path while it waits. For a target the NavMesh can't reach (a roof, the top of tall furniture) that
+    // search covers the whole connected mesh, ~7 frames here, so re-asking every 0.2s left her holding
+    // a path for one frame in seven: frozen in her run pose, creeping a few centimetres a second, and
+    // every stuck check below waited on pathPending and never fired.
+    void SetPathTo(Vector3 target)
+    {
+        if (chasePath == null) chasePath = new NavMeshPath();
+        if (agent.CalculatePath(target, chasePath) && chasePath.status != NavMeshPathStatus.PathInvalid)
+            agent.SetPath(chasePath);
+        else
+            agent.SetDestination(target);
     }
 
     void SetNewRoamDestination()
     {
         agent.stoppingDistance = 0f;
+        if (TryHuntDestination()) return;
         Vector3 randomDir = Random.insideUnitSphere * roamRadius;
         randomDir += transform.position;
         if (NavMesh.SamplePosition(randomDir, out NavMeshHit hit, roamRadius, 1))
         {
             agent.SetDestination(hit.position);
         }
+    }
+
+    // Random roaming around herself let her drift through a three-storey asylum for minutes without
+    // ever coming near the player. Most roam spots now land in a ring around the player instead, on
+    // floor she can actually walk to, so she keeps patrolling their area. Not while the start tips are
+    // up, not while they're hidden (she'd camp the locker), and not right after giving up on a perch.
+    bool TryHuntDestination()
+    {
+        if (player == null || StartGraceActive || Random.value > huntChance) return false;
+        if (playerHideState != null && playerHideState.IsHiding) return false;
+        if (Time.time < ignorePerchedUntil) return false;
+
+        Vector3 centre = GetPlayerNavTarget();
+        if (reachTestPath == null) reachTestPath = new NavMeshPath();
+        for (int i = 0; i < 6; i++)
+        {
+            Vector2 r = Random.insideUnitCircle.normalized * Random.Range(huntMinDistance, Mathf.Max(huntMinDistance, huntRadius));
+            if (!NavMesh.SamplePosition(centre + new Vector3(r.x, 0f, r.y), out NavMeshHit hit, 2f, NavMesh.AllAreas)) continue;
+            if (!agent.CalculatePath(hit.position, reachTestPath) || reachTestPath.status != NavMeshPathStatus.PathComplete) continue;
+            agent.SetPath(reachTestPath);
+            return true;
+        }
+        return false;
     }
 
     bool CanSeePlayer(bool litByFlashlight)
@@ -603,6 +807,8 @@ public class GhostController : MonoBehaviour
     void EnterChase()
     {
         state = State.Chasing;
+        isProwling = false;
+        outOfReachTimer = 0f;
         lastSeenTimer = 0f;
         chaseStallTimer = 0f;
         nextChaseRepathTime = 0f; // force an immediate repath this frame rather than waiting out the throttle window below
@@ -630,6 +836,8 @@ public class GhostController : MonoBehaviour
     void EnterRoam()
     {
         state = State.Roaming;
+        isProwling = false;
+        outOfReachTimer = 0f;
         lastSeenTimer = 0f;
         searchTimer = 0f;
         agent.speed = roamSpeed;
@@ -643,6 +851,8 @@ public class GhostController : MonoBehaviour
     void EnterSearch()
     {
         state = State.Searching;
+        isProwling = false;
+        outOfReachTimer = 0f;
         searchTimer = 0f;
         agent.speed = roamSpeed;
         agent.isStopped = false; // same fix as EnterChase() - EnterAttack() can leave this stuck true otherwise
@@ -717,6 +927,8 @@ public class GhostController : MonoBehaviour
     void EnterStalk()
     {
         state = State.Stalking;
+        isProwling = false;
+        outOfReachTimer = 0f;
         stalkTimer = 0f;
         agent.isStopped = false;
         agent.speed = stalkSpeed;
@@ -759,7 +971,15 @@ public class GhostController : MonoBehaviour
         }
         else
         {
-            agent.SetDestination(GetPlayerNavTarget());
+            // Re-asking every frame used to keep her pathless whenever the player stood somewhere she
+            // can't reach (see SetPathTo).
+            Vector3 target = GetPlayerNavTarget();
+            if ((target - lastChaseDestination).sqrMagnitude > 1f || Time.time >= nextChaseRepathTime)
+            {
+                SetPathTo(target);
+                lastChaseDestination = target;
+                nextChaseRepathTime = Time.time + (agent.pathStatus == NavMeshPathStatus.PathComplete ? 0.3f : 1.5f);
+            }
         }
 
         if (Time.time >= nextStalkClipTime)
@@ -773,6 +993,8 @@ public class GhostController : MonoBehaviour
     void EnterAttack()
     {
         state = State.Attacking;
+        isProwling = false;
+        outOfReachTimer = 0f;
         agent.isStopped = true;
         // The agent auto-faces its movement direction by default (updateRotation=true) - left on
         // during the windup, it fights the manual look-at Slerp below every frame, which reads as
@@ -1026,7 +1248,8 @@ public class GhostController : MonoBehaviour
     {
         if (anim != null)
         {
-            bool running = state == State.Chasing;
+            // Circling below an unreachable player is a stalking walk, not a sprint.
+            bool running = state == State.Chasing && !isProwling;
             anim.SetBool("IsRunning", running);
 
             if (state == State.Attacking)
@@ -1035,7 +1258,7 @@ public class GhostController : MonoBehaviour
             }
             else
             {
-                float baseline = running ? chaseSpeed : (state == State.Stalking ? stalkSpeed : roamSpeed);
+                float baseline = running ? chaseSpeed : isProwling ? prowlSpeed : (state == State.Stalking ? stalkSpeed : roamSpeed);
                 float speedRatio = agent.velocity.magnitude / Mathf.Max(baseline, 0.01f);
                 // No dedicated idle clip exists, so a full stop (waiting between roam destinations,
                 // the Searching scan-turn, frozen mid-stalk) used to still play the walk cycle at 30%

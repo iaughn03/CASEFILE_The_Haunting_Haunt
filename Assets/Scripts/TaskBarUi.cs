@@ -37,6 +37,11 @@ public class TaskbarUI : MonoBehaviour
 
     public void RefreshTaskbarData()
     {
+        // The bag can be opened, and this called, before Start() ever ran on this panel (it starts
+        // hidden), so the Start() lookup alone left it without a manager on the first open.
+        if (evidenceManager == null)
+            evidenceManager = FindFirstObjectByType<EvidenceManager>();
+
         if (evidenceManager == null)
         {
             Debug.LogWarning("TaskbarUI: No EvidenceManager found!");

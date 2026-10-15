@@ -208,6 +208,15 @@ public class FlashlightController : MonoBehaviour
         if (playerMovement != null) playerMovement.SetHoldingItem(isOn);
     }
 
+    // Battery pickups go through here so the bar jumps up the moment one is collected. Update only
+    // redraws the bar while the light is on, so writing batteryLife directly left it looking stale.
+    public void AddBattery(float amount)
+    {
+        batteryLife = Mathf.Min(maxBattery, batteryLife + amount);
+        if (batteryLife >= flickerThreshold) flickerMultiplier = 1f;
+        UpdateUI();
+    }
+
     void UpdateUI()
     {
         // Battery Bar Logic

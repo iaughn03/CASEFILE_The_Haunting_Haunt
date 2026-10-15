@@ -116,7 +116,10 @@ public class EvidencePickUp : MonoBehaviour
             // recorded in the journal, not carried away.
             bool stayVisible = caseItem != null && caseItem.keepInWorld;
             if (!stayVisible)
+            {
                 foreach (Renderer rend in GetComponentsInChildren<Renderer>()) rend.enabled = false;
+                FreezeBodies();
+            }
 
             // The glow outline is a "not-yet-picked-up" affordance - without disabling it here,
             // it would silently reappear later whenever the 3D inspection view re-enables this
@@ -129,5 +132,33 @@ public class EvidencePickUp : MonoBehaviour
                 "PlayerInteract or InspectItem missing!"
             );
         }
+    }
+
+    // A falling body (Game1's pill bottle has gravity on) with its colliders switched off dropped
+    // through the floor for as long as it sat in the bag, gathering speed the whole time - so the
+    // 3D view borrowed it from somewhere far below the map, and dropping it put it back in the world
+    // still moving at that speed. Held still while collected; ReleaseBodies hands it back on drop.
+    private Rigidbody[] frozenBodies;
+
+    private void FreezeBodies()
+    {
+        var bodies = new System.Collections.Generic.List<Rigidbody>();
+        foreach (Rigidbody rb in GetComponentsInChildren<Rigidbody>(true))
+        {
+            if (rb.isKinematic) continue;
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.isKinematic = true;
+            bodies.Add(rb);
+        }
+        frozenBodies = bodies.ToArray();
+    }
+
+    public void ReleaseBodies()
+    {
+        if (frozenBodies == null) return;
+        foreach (Rigidbody rb in frozenBodies)
+            if (rb != null) rb.isKinematic = false;
+        frozenBodies = null;
     }
 }

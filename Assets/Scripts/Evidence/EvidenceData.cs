@@ -28,6 +28,8 @@ public class EvidenceData : ScriptableObject
     [Header("What the player sees")]
     [Tooltip("Only what is physically visible - no conclusions, no hints about what it means. Shown under \"Observation\" in the bag.")]
     [TextArea(2, 12)] public string observation;
+    [Tooltip("A plain fact the investigator would know about this kind of clue, plus a leading question. Points toward what it could connect to without naming the answer. Shown under the observation in the bag and in the Case File.")]
+    [TextArea(2, 8)] public string clueNote;
 
     [Header("Revealed only in the ending")]
     [Tooltip("What the clue really meant. Shown on the ending screen after the ruling has been graded.")]

@@ -28,7 +28,7 @@ public class InventoryToggle : MonoBehaviour
         // I/Tab while paused opened the bag panel on top of the pause menu without PauseManager's
         // isBagOpen ever learning about it. Resuming afterward then left the bag panel stuck open
         // over normal gameplay since nothing told it to close.
-        if (PauseManager.isPaused || PauseManager.isCaseUiOpen) return;
+        if (PauseManager.isPaused || PauseManager.isCaseUiOpen || CaseFileUI.IsOpen) return;
 
         // When PauseManager drives this same panel it owns the bag key. Both used to flip the panel
         // on the same press, and in scenes where PauseManager ran first this flipped it straight back,

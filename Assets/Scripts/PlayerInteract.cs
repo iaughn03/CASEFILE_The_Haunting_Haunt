@@ -67,11 +67,13 @@ public class PlayerInteract : MonoBehaviour
     private FlashlightController flashlightController;
     private PlayerHealth playerHealth;
     private PlayerHideState hideState;
+    private PlayerWindowClimb windowClimb;
 
     void Start()
     {
         hotbarManager = FindFirstObjectByType<HotbarManager>();
         playerMovement = GetComponent<PlayerMovement>();
+        windowClimb = GetComponent<PlayerWindowClimb>();
         flashlightController = FindFirstObjectByType<FlashlightController>();
         playerHealth = GetComponent<PlayerHealth>();
         InitializeInventory();
@@ -144,8 +146,23 @@ void Update()
     UpdateHandVisuals();
 }
 
+    // Names of the level's real door keys (KeyItem), normalised. Only these show the key in the
+    // player's hand. Matching "key" in the item name made evidence like Game3's "Spare Key Under Mat"
+    // or Game2's "Family Only Key" look like a usable key when it is only something to inspect.
+    private readonly System.Collections.Generic.List<string> doorKeyNames = new System.Collections.Generic.List<string>();
+
+    private void RememberDoorKey(string keyName)
+    {
+        string n = Normalize(keyName);
+        if (n.Length > 0 && !doorKeyNames.Contains(n)) doorKeyNames.Add(n);
+    }
+
     private void InitializeInventory()
     {
+        doorKeyNames.Clear();
+        foreach (KeyItem k in FindObjectsByType<KeyItem>(FindObjectsInactive.Include, FindObjectsSortMode.None))
+            RememberDoorKey(k.keyName);
+
         slotOccupied = new bool[16];
         heldItemNames = new string[16];
 
@@ -228,8 +245,7 @@ void Update()
                         item.image.sprite = null;
                         item.image.enabled = false;
                     }
-                    item.itemName = "";
-                    item.sourceWorldObject = null;
+                    ClearItemData(item);
                 }
             }
 
@@ -293,6 +309,7 @@ void Update()
         if (worldObject.TryGetComponent<EvidencePickUp>(out EvidencePickUp evidence))
         {
             evidence.isCollected = false;
+            evidence.ReleaseBodies();
         }
 
         if (worldObject.TryGetComponent<KeyItem>(out KeyItem key))
@@ -350,6 +367,10 @@ void Update()
         }
     }
 
+    // The casts above only see the Interact layer, so walls, floors and furniture were invisible
+    // to them: from outside a house the crosshair could open doors and take clues through the wall.
+    if (gotHit && IsBehindWorldGeometry(ray.origin, hit)) gotHit = false;
+
     if (gotHit)
     {
         // Doors (checked first - own configurable range, independent of interactRange).
@@ -406,7 +427,7 @@ void Update()
             }
             else
             {
-                HideInteractionUI();
+                HideOrOfferClimb();
             }
 
             return;
@@ -431,7 +452,29 @@ void Update()
             }
             else
             {
-                HideInteractionUI();
+                HideOrOfferClimb();
+            }
+
+            return;
+        }
+
+        // Windows (Game2): two sash colliders per window, looked up through WindowController's own
+        // sash registry since a corner piece carries two windows under one parent.
+        WindowController window = WindowController.FromCollider(hit.collider);
+        if (window != null)
+        {
+            if (hit.distance <= window.interactionRange)
+            {
+                SetInteractionUI(window.IsOpen ? "[E] Close " + window.windowName : "[E] Open " + window.windowName);
+
+                if (GameKeys.Down(GameKeys.Action.Interact))
+                {
+                    window.Interaction(this);
+                }
+            }
+            else
+            {
+                HideOrOfferClimb();
             }
 
             return;
@@ -439,7 +482,21 @@ void Update()
 
         if (hit.distance > interactRange)
         {
-            HideInteractionUI();
+            HideOrOfferClimb();
+            return;
+        }
+
+        // Readable documents that are not evidence (witness statements): read in place, never collected
+        if (hit.collider.TryGetComponent<ReadableNote>(out ReadableNote readable))
+        {
+            SetInteractionUI("[E] Read " + readable.title);
+
+            if (GameKeys.Down(GameKeys.Action.Interact))
+            {
+                HideInteractionUI();
+                readable.Read();
+            }
+
             return;
         }
 
@@ -534,8 +591,68 @@ void Update()
 
     }
 
-    HideInteractionUI();
+    HideOrOfferClimb();
 }
+
+    // Nothing to interact with under the crosshair: if the player is squared up to an open window
+    // they can climb through, say so (the climb itself runs from PlayerMovement's jump key).
+    private void HideOrOfferClimb()
+    {
+        if (windowClimb != null && windowClimb.CanClimb())
+            SetInteractionUI("[" + GameKeys.KeyName(GameKeys.Get(GameKeys.Action.Jump)) + "] Climb Through Window");
+        else
+            HideInteractionUI();
+    }
+
+    private readonly RaycastHit[] sightHits = new RaycastHit[16];
+
+    // True when solid non-Interact geometry sits between the camera and the interactable the ray
+    // found. Measured from the camera itself (not a pulled-back retry origin, which could start
+    // behind a wall at the player's back). The player's own colliders and other parts of the same
+    // door/cabinet/object don't count, and 5 cm of slack keeps a clue lying flush on a floor or
+    // shelf from being hidden by that surface.
+    private bool IsBehindWorldGeometry(Vector3 eye, RaycastHit target)
+    {
+        Vector3 toTarget = target.point - eye;
+        float distance = toTarget.magnitude - 0.05f;
+        if (distance <= 0f) return false;
+
+        int count = Physics.RaycastNonAlloc(eye, toTarget / toTarget.magnitude, sightHits, distance,
+            ~interactableLayer, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < count; i++)
+        {
+            Collider c = sightHits[i].collider;
+            if (c == null || c == target.collider) continue;
+            if (c.transform.IsChildOf(transform.root)) continue; // the player's own body
+            if (c.transform.IsChildOf(target.collider.transform)) continue;
+            if (SameOwner<DoorController>(c, target.collider) || SameOwner<CabinetController>(c, target.collider)) continue;
+            if (Houses(c, target.collider.bounds.center)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    // Furniture wrapped around the thing being aimed at (a wardrobe body around its drawers, a rack
+    // frame around its file boxes, a fridge around the battery inside) isn't a wall in the way: its
+    // collider shell sits a few cm in front of them. Walls are thin slabs, so whatever stands behind
+    // one is never inside its bounds; the size cap keeps a whole building mesh from counting.
+    private static bool Houses(Collider blocker, Vector3 point)
+    {
+        Bounds local;
+        if (blocker is BoxCollider box) local = new Bounds(box.center, box.size);
+        else if (blocker is MeshCollider mesh && mesh.sharedMesh != null) local = mesh.sharedMesh.bounds;
+        else return false;
+
+        Vector3 size = Vector3.Scale(local.size, blocker.transform.lossyScale);
+        if (Mathf.Max(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z)) > 5f) return false;
+        return local.Contains(blocker.transform.InverseTransformPoint(point));
+    }
+
+    private static bool SameOwner<T>(Collider a, Collider b) where T : Component
+    {
+        T owner = b.GetComponentInParent<T>();
+        return owner != null && a.GetComponentInParent<T>() == owner;
+    }
 
     private void StartInspectingObject(InspectItem item)
     {
@@ -588,8 +705,7 @@ void Update()
 
             showKey =
                 slotOccupied[currentlySelectedSlot] &&
-                !string.IsNullOrEmpty(itemName) &&
-                itemName.ToLower().Contains("key");
+                doorKeyNames.Contains(Normalize(itemName));
         }
 
         handKeyVisual.SetActive(showKey);
@@ -638,6 +754,7 @@ void Update()
 {
     slotOccupied[index] = true;
     heldItemNames[index] = key.keyName;
+    RememberDoorKey(key.keyName); // in case it was spawned after the start-up scan
 
     if (index >= allInventorySlots.Length ||
         allInventorySlots[index] == null)
@@ -670,7 +787,9 @@ void Update()
         drag.parentAfterDrag =
             targetSlot.transform;
 
+        drag.isReadableNote = false;
         drag.sourceWorldObject = key.gameObject;
+        drag.inspectCopySource = null;
 
         // Force the icon box itself and compensate for the slot's own scale - see the matching
         // comments in CollectEvidence(). This was previously missing the scale compensation
@@ -722,6 +841,20 @@ void Update()
     // state, so read the icon's target size from there when the slot belongs to one; the hotbar
     // isn't grid-managed and its slots' rects are always valid (it's on screen the whole session).
     private Vector2 GetSlotIconSize(InventorySlot slot) => slot.IconSize();
+
+    // Every slot reuses one DraggableItem for its whole life (see GetOrCreateDraggableItem), so an
+    // emptied slot has to forget everything about its last item. Leftovers used to carry over to the
+    // next pickup: a key landing where a dropped note had been opened the note reader with the key's
+    // text when clicked, and evidence could show the previous key's "Usage" line.
+    private static void ClearItemData(DraggableItem item)
+    {
+        item.itemName = "";
+        item.itemDescription = "";
+        item.itemUsage = "";
+        item.isReadableNote = false;
+        item.sourceWorldObject = null;
+        item.inspectCopySource = null;
+    }
 
     private DraggableItem GetDirectDraggableItem(InventorySlot slot)
     {
@@ -816,9 +949,7 @@ void Update()
 
                 if (item != null)
                 {
-                    item.itemName = "";
-                    item.itemDescription = "";
-                    item.itemUsage = "";
+                    ClearItemData(item);
 
                     if (item.image != null)
                     {
@@ -949,6 +1080,7 @@ public void CollectEvidence(InspectItem item)
 
                 drag.sourceSlot = targetSlot;
                 drag.parentAfterDrag = targetSlot.transform;
+                drag.itemUsage = "";
                 drag.isReadableNote = item.GetComponent<NoteObject>() != null;
 
                 // Kept for notes too (not just evidence/keys) now that NoteSystem hides rather than
@@ -957,9 +1089,11 @@ public void CollectEvidence(InspectItem item)
                 // isReadableNote items to the note-reading overlay before it ever checks this, so
                 // setting it here doesn't change how notes behave when clicked in the bag.
                 // Scene evidence that stays in the world (EvidenceItem.keepInWorld) has no hidden pickup to
-                // borrow for the 3D view or to put back when dropped, so it keeps no world reference.
+                // borrow or to put back when dropped, so it keeps no world reference; the 3D view shows
+                // a copy of it instead.
                 bool keepInWorld = item.TryGetComponent<EvidenceItem>(out EvidenceItem caseEvidence) && caseEvidence.keepInWorld;
                 drag.sourceWorldObject = keepInWorld ? null : item.gameObject;
+                drag.inspectCopySource = keepInWorld ? item.gameObject : null;
             }
 
             // Update hotbar if placed in hotbar - false: the DraggableItem set up above already

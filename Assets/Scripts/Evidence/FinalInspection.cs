@@ -31,7 +31,8 @@ public class FinalInspection : MonoBehaviour
         [TextArea(2, 5)] public string wrongReason;
     }
 
-    public enum Step { Confirm, Wall, Ruling, Accusation, Proof, Sign, Ending, Summary, Lesson }
+    // Story was added last (the order on screen is set in Next(), not by these values).
+    public enum Step { Confirm, Wall, Ruling, Accusation, Proof, Sign, Ending, Summary, Lesson, Story }
     private enum Tier { Best, Partial, Worst }
 
     // The three rulings the player picks between on the Ruling screen. The game teaches the real
@@ -69,8 +70,8 @@ public class FinalInspection : MonoBehaviour
     [TextArea(3, 8)] public string wrongMurderReason;
     [Tooltip("Why a Homicide ruling doesn't fit this case. Must not name the right ruling.")]
     [TextArea(3, 8)] public string wrongHomicideReason;
-    [Tooltip("Closes every wrong report, over the Try Again button.")]
-    public string retryLine = "Look at the evidence again and file a new report.";
+    [Tooltip("Closes every wrong report, over the Retry button (which restarts the level).")]
+    public string retryLine = "Press Retry to start the case again from the beginning.";
 
     [Header("Score")]
     public int rulingPoints = 30;
@@ -78,6 +79,8 @@ public class FinalInspection : MonoBehaviour
     public int pointsPerLink = 8;
     [Tooltip("Each wrong string on the Case Wall costs this share of a link's points (rounded up). 0.5 = half a link: 5 when a link is worth 10, 2 when it is worth 4.")]
     [Range(0f, 1f)] public float wrongLinkPenaltyShare = 0.5f;
+    [Tooltip("Each report sent back (wrong ruling or wrong accused) costs this share of the case's maximum score, rounded. 0.1 = 10 points on a 100 point case. The final score never goes below 0.")]
+    [Range(0f, 1f)] public float wrongReportPenaltyShare = 0.1f;
     [Tooltip("Valid links needed, with the right ruling and suspect, for the best ending.")]
     public int bestMinLinks = 3;
 
@@ -176,6 +179,7 @@ public class FinalInspection : MonoBehaviour
     public AudioSource scratchAudio;
 
     private Step step;
+    public Step CurrentStep => step;
     private bool open;
     private Verdict verdict;
     private bool ruled;
@@ -184,9 +188,10 @@ public class FinalInspection : MonoBehaviour
     private bool stamped;
     private bool locked;
     private bool endingReady;
+    private bool wallBuilt; // Back can return to the wall; rebuilding it would wipe the pinned strings
     private Tier tier;
     private int score;
-    private int wrongReports; // reports sent back this inspection; shown on the summary
+    private int wrongReports; // reports sent back since the level loaded (backing out does not clear it); costs points
     private Coroutine running;
     private readonly List<EvidenceData> citedProof = new List<EvidenceData>();
     private readonly List<GameObject> proofEntries = new List<GameObject>();
@@ -275,9 +280,9 @@ public class FinalInspection : MonoBehaviour
 
         verdict = Verdict.Parricide; ruled = false; suspectIndex = -1;
         signed = stamped = locked = endingReady = false;
+        // wallBuilt is NOT reset: strings pinned before the player backed out ("Not yet") stay on the wall
         citedProof.Clear();
         proofScore = 0;
-        wrongReports = 0;
 
         if (pauseManager == null) pauseManager = FindFirstObjectByType<PauseManager>();
         if (playerMovement == null) playerMovement = FindFirstObjectByType<PlayerMovement>();
@@ -342,11 +347,13 @@ public class FinalInspection : MonoBehaviour
         Show(signScreen, next == Step.Sign);
         Show(endingScreen, next == Step.Ending);
         // the lesson is laid out on the summary screen: reading text on the left, a side panel on the right
-        Show(summaryScreen, next == Step.Summary || next == Step.Lesson);
+        Show(summaryScreen, next == Step.Summary || next == Step.Lesson || next == Step.Story);
 
-        bool showBack = next == Step.Confirm || next == Step.Lesson;
+        // Every step before signing can step back one screen; picks made there are kept.
+        bool showBack = next == Step.Confirm || next == Step.Lesson || next == Step.Wall
+                        || next == Step.Ruling || next == Step.Accusation || next == Step.Proof;
         Show(backButton != null ? backButton.gameObject : null, showBack);
-        if (backLabel != null) backLabel.text = next == Step.Lesson ? "Back" : "Not yet";
+        if (backLabel != null) backLabel.text = next == Step.Confirm ? "Not yet" : "Back";
 
         bool summary = next == Step.Summary;
         Show(nextButton != null ? nextButton.gameObject : null, !summary);
@@ -370,7 +377,7 @@ public class FinalInspection : MonoBehaviour
             case Step.Wall:
                 SetTitle("The Case Wall");
                 SetNext("Next", true);
-                BuildWall();
+                if (!wallBuilt || WallCluesChanged()) { BuildWall(); wallBuilt = true; }
                 UpdateWallPrompt();
                 break;
 
@@ -430,6 +437,13 @@ public class FinalInspection : MonoBehaviour
                 BuildSummary();
                 break;
 
+            case Step.Story:
+                SetTitle("What really happened");
+                SetPrompt("");
+                BuildStory();
+                SetNext("Next", true);
+                break;
+
             case Step.Lesson:
                 SetTitle(lessonTitle);
                 SetPrompt("");
@@ -444,19 +458,21 @@ public class FinalInspection : MonoBehaviour
         switch (step)
         {
             case Step.Confirm: ShowStep(Step.Wall); break;
-            case Step.Wall: ShowStep(Step.Ruling); break;
-            // Every ruling now names a killer, so the accusation is always asked - unlike the old
-            // Suicide option, which had nobody to accuse and skipped straight to signing.
-            case Step.Ruling: ShowStep(Step.Accusation); break;
-            case Step.Accusation: ShowStep(useProofStep ? Step.Proof : Step.Sign); break;
+            // Who did it comes before which crime it was: Parricide turns on who the killer is to the
+            // victim, so the ruling can only be judged once the accused is named.
+            case Step.Wall: ShowStep(Step.Accusation); break;
+            case Step.Accusation: ShowStep(Step.Ruling); break;
+            case Step.Ruling: ShowStep(useProofStep ? Step.Proof : Step.Sign); break;
             case Step.Proof: ShowStep(Step.Sign); break;
             case Step.Sign: if (locked) ShowStep(Step.Ending); break;
-            case Step.Ending: if (endingReady && tier != Tier.Worst) ShowStep(Step.Summary); break;
+            // a correct report first tells the whole story, then the summary scores it
+            case Step.Ending: if (endingReady && tier != Tier.Worst) ShowStep(HasStory ? Step.Story : Step.Summary); break;
+            case Step.Story: ShowStep(Step.Summary); break;
             case Step.Lesson: LoadMainMenu(); break;
         }
     }
 
-    // A wrong report offers the summary's own two buttons: Retry goes back to the ruling, Main Menu leaves.
+    // A wrong report offers the summary's own two buttons: Retry restarts the level, Main Menu leaves.
     private void ShowWrongReportFooter()
     {
         Show(nextButton != null ? nextButton.gameObject : null, false);
@@ -473,22 +489,17 @@ public class FinalInspection : MonoBehaviour
         if (text != null) text.text = label;
     }
 
-    // A wrong report goes back to the ruling. The wall (and what its wrong strings cost) stays as it was,
-    // and the earlier picks stay marked so the player changes only what they now think is wrong.
-    private void TryAgain()
-    {
-        signed = stamped = locked = endingReady = false;
-        if (redFlash != null) { var c = redFlash.color; c.a = 0f; redFlash.color = c; }
-        SetGhost(0f, Color.white);
-        if (ghostImage != null) ghostImage.rectTransform.localScale = Vector3.one;
-        if (endingTextGroup != null) endingTextGroup.alpha = 0f;
-        ShowStep(fixedRuling ? Step.Accusation : Step.Ruling);
-    }
-
     private void Back()
     {
-        if (step == Step.Confirm) Cancel();
-        else if (step == Step.Lesson) ShowStep(Step.Summary);
+        switch (step)
+        {
+            case Step.Confirm: Cancel(); break;
+            case Step.Wall: ShowStep(Step.Confirm); break;
+            case Step.Accusation: ShowStep(Step.Wall); break;
+            case Step.Ruling: ShowStep(Step.Accusation); break;
+            case Step.Proof: ShowStep(Step.Ruling); break;
+            case Step.Lesson: ShowStep(Step.Summary); break;
+        }
     }
 
     private static void Show(GameObject go, bool on) { if (go != null && go.activeSelf != on) go.SetActive(on); }
@@ -529,17 +540,49 @@ public class FinalInspection : MonoBehaviour
         return list;
     }
 
+    private readonly List<EvidenceData> wallClues = new List<EvidenceData>();
+
+    // Rebuilding lays the cards out again; the strings already pinned are carried over onto it.
     private void BuildWall()
     {
         if (wall == null) return;
+        var keepLinks = new List<CaseLinkSet.Link>(wall.MadeLinks);
+        var keepWrong = new List<(EvidenceData a, EvidenceData b)>(wall.WrongPairs);
+        var clues = CollectedClues();
+
         wall.linkSet = linkSet;
         Canvas.ForceUpdateCanvases();
-        wall.Build(CollectedClues());
+        wall.Build(clues);
+        wallClues.Clear();
+        foreach (var c in clues) wallClues.Add(c.data);
         wall.LinksChanged -= UpdateWallPrompt;
         wall.LinksChanged += UpdateWallPrompt;
+        if (keepLinks.Count > 0 || keepWrong.Count > 0) wall.RestoreStrings(keepLinks, keepWrong);
+    }
+
+    // The player can leave the inspection and come back with more clues in the bag; the board then
+    // needs a card for each new one.
+    private bool WallCluesChanged()
+    {
+        var clues = CollectedClues();
+        if (clues.Count != wallClues.Count) return true;
+        for (int i = 0; i < clues.Count; i++) if (clues[i].data != wallClues[i]) return true;
+        return false;
     }
 
     private int WrongLinkPenalty => Mathf.CeilToInt(pointsPerLink * wrongLinkPenaltyShare);
+
+    private int MaxScore
+    {
+        get
+        {
+            int maxLinks = linkSet != null ? linkSet.links.Count : 5;
+            int maxProof = useProofStep ? maxProofSelections * pointsPerStrongProof : 0;
+            return (fixedRuling ? 0 : rulingPoints) + suspectPoints + maxLinks * pointsPerLink + maxProof;
+        }
+    }
+
+    private int WrongReportPenalty => Mathf.RoundToInt(MaxScore * wrongReportPenaltyShare);
 
     // Tells the player how many connections exist, so they know the rest of the clues (the red herrings)
     // aren't meant to connect, and how many strings they've pinned. Right strings show their proof tag on
@@ -549,12 +592,18 @@ public class FinalInspection : MonoBehaviour
         if (wall == null) { SetPrompt("Drag a string from one clue to another."); return; }
         int total = wall.AvailableLinks;
         int pinned = wall.ValidLinks + wall.InvalidAttempts;
-        string s = total > 0
+
+        // One short goal line, then the how and the cost on a smaller, quieter line under it, so the
+        // goal reads at a glance instead of one run on sentence wrapping across the screen.
+        string goal = total > 0
             ? "Find the " + total + " connections. Not every clue connects."
-            : "Drag a string from one clue to another.";
-        if (pinned > 0) s += "  Strings pinned: " + pinned + ".";
-        if (WrongLinkPenalty > 0) s += "  A wrong string costs " + WrongLinkPenalty + " points.";
-        SetPrompt(s);
+            : "Connect the clues that belong together.";
+        var details = new List<string> { "Drag between two clues to pin a string", "Click a clue to read it" };
+        if (WrongLinkPenalty > 0) details.Add("Wrong string: " + WrongLinkPenalty + " points off");
+        if (pinned > 0) details.Add("Pinned: " + pinned);
+
+        SetPrompt("<size=30>" + goal + "</size>\n<size=22><color=#9C958A>"
+                  + string.Join("     •     ", details) + "</color></size>");
     }
 
     // ---- ruling / accusation ----------------------------------------------------------------
@@ -797,7 +846,8 @@ public class FinalInspection : MonoBehaviour
         int maxLinks = linkSet != null ? linkSet.links.Count : 5;
         int rulingScore = fixedRuling ? 0 : (ruledRight ? rulingPoints : 0);
         int wrongCost = (wall != null ? wall.InvalidAttempts : 0) * WrongLinkPenalty;
-        score = Mathf.Max(0, rulingScore + (suspectRight ? suspectPoints : 0) + Mathf.Min(links, maxLinks) * pointsPerLink + proofScore - wrongCost);
+        int reportCost = wrongReports * WrongReportPenalty;
+        score = Mathf.Max(0, rulingScore + (suspectRight ? suspectPoints : 0) + Mathf.Min(links, maxLinks) * pointsPerLink + proofScore - wrongCost - reportCost);
         AssessmentResults.RecordClassification(tier == Tier.Best);
         // "Case closed" marks the level solved on the map selection.
         LevelProgress.RecordResult(SceneManager.GetActiveScene().name, tier == Tier.Best, score);
@@ -824,8 +874,14 @@ public class FinalInspection : MonoBehaviour
               .Append(accused == null || string.IsNullOrWhiteSpace(accused.wrongReason) ? "The evidence doesn't hold against them." : accused.wrongReason);
         }
         if (!string.IsNullOrWhiteSpace(retryLine)) sb.Append("\n\n<i>").Append(retryLine).Append("</i>");
+        if (WrongReportPenalty > 0)
+            sb.Append("\n<i>Each wrong report takes ").Append(WrongReportPenalty).Append(" points off the case score. Wrong reports so far: ")
+              .Append(wrongReports).Append(".</i>");
         return sb.ToString();
     }
+
+    private Vector2 ghostHome;
+    private bool ghostHomeKnown;
 
     private IEnumerator EndingRoutine()
     {
@@ -853,9 +909,12 @@ public class FinalInspection : MonoBehaviour
         if (redFlash != null) { var c = redFlash.color; c.a = 0f; redFlash.color = c; }
         if (ghostImage != null)
         {
+            // Back to where the scene puts it (left of the ending text), not the screen centre - zero
+            // sat the ghost right under the title and body.
+            if (!ghostHomeKnown) { ghostHome = ghostImage.rectTransform.anchoredPosition; ghostHomeKnown = true; }
             ghostImage.gameObject.SetActive(true);
             ghostImage.rectTransform.localScale = Vector3.one;
-            ghostImage.rectTransform.anchoredPosition = Vector2.zero;
+            ghostImage.rectTransform.anchoredPosition = ghostHome;
             SetGhost(0f, new Color(0.78f, 0.90f, 1f));
         }
 
@@ -875,7 +934,7 @@ public class FinalInspection : MonoBehaviour
                 t += Time.unscaledDeltaTime;
                 float k = t / dur;
                 SetGhost(Mathf.Lerp(0.85f, 0f, k), Color.Lerp(new Color(0.78f, 0.90f, 1f), Color.white, k));
-                if (ghostImage != null) ghostImage.rectTransform.anchoredPosition = new Vector2(0f, Mathf.Lerp(0f, 60f, k));
+                if (ghostImage != null) ghostImage.rectTransform.anchoredPosition = ghostHome + new Vector2(0f, Mathf.Lerp(0f, 60f, k));
                 yield return null;
             }
         }
@@ -1045,7 +1104,7 @@ public class FinalInspection : MonoBehaviour
             s.Append("Wrong strings\n   ").Append(invalid);
             if (invalid > 0) s.Append("   lost ").Append(invalid * WrongLinkPenalty);
             s.Append("\n\n");
-            if (wrongReports > 0) s.Append("Reports sent back\n   ").Append(wrongReports).Append("\n\n");
+            if (wrongReports > 0) s.Append("Wrong reports\n   ").Append(wrongReports).Append("   lost ").Append(wrongReports * WrongReportPenalty).Append("\n\n");
             if (useProofStep)
                 s.Append("Proof cited\n   ").Append(citedProof.Count).Append(" of ").Append(maxProofSelections)
                  .Append("   ").Append(proofScore).Append(" / ").Append(maxProofSelections * pointsPerStrongProof).Append("\n\n");
@@ -1063,13 +1122,64 @@ public class FinalInspection : MonoBehaviour
         AudioListener.pause = false;
     }
 
-    // After a wrong report, Retry reopens the ruling with everything else kept. From the Case Summary it
-    // reloads the scene, which resets every clue, spawn, counter and marker.
+    // After a wrong report, Retry goes back to the accusation with the wall and the picks kept (marked), so
+    // the player can rethink the accused and the ruling from the evidence. On the summary it restarts the
+    // level: reloading the scene resets every clue, spawn, counter and marker.
     private void Retry()
     {
-        if (step == Step.Ending && tier == Tier.Worst) { TryAgain(); return; }
+        if (step == Step.Ending && tier == Tier.Worst)
+        {
+            SendBackToAccusation();
+            return;
+        }
         LeaveScene();
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+    }
+
+    private void SendBackToAccusation()
+    {
+        if (running != null) { StopCoroutine(running); running = null; }
+        signed = stamped = locked = endingReady = false;
+        if (redFlash != null) { var c = redFlash.color; c.a = 0f; redFlash.color = c; }
+        if (ghostImage != null) { ghostImage.rectTransform.localScale = Vector3.one; SetGhost(0f, Color.white); }
+        if (endingTextGroup != null) endingTextGroup.alpha = 0f;
+        SetButtonLabel(menuButton, "Main Menu");
+        ShowStep(Step.Accusation);
+    }
+
+    // ---- what really happened ---------------------------------------------------------------
+
+    private CaseStoryData Story => CaseFileUI.Instance != null ? CaseFileUI.Instance.story : null;
+    private bool HasStory => Story != null && !string.IsNullOrWhiteSpace(Story.storyReveal);
+
+    // The full account, on its own screen right after "Case closed": the story on the left, the case in
+    // brief on the right. Only reached from a correct report, so it never gives away an answer.
+    private void BuildStory()
+    {
+        if (summaryText != null) summaryText.text = Story != null ? Story.storyReveal : whatReallyHappened;
+        if (summaryScroll != null)
+        {
+            Canvas.ForceUpdateCanvases();
+            summaryScroll.verticalNormalizedPosition = 1f;
+        }
+
+        if (scoreText != null)
+        {
+            var s = new StringBuilder();
+            s.Append("<size=130%>The case</size>\n\n");
+            s.Append("Deceased\n   ").Append(deceasedName).Append("\n\n");
+            Suspect culprit = null;
+            if (suspects != null) foreach (var x in suspects) if (x != null && x.isCulprit) { culprit = x; break; }
+            if (culprit != null) s.Append("Killer\n   ").Append(culprit.suspectName).Append("\n   ").Append(culprit.role).Append("\n\n");
+            s.Append("Ruling\n   ").Append(fixedRuling ? StripLabel(fixedRulingLabel) : correctVerdict.ToString());
+            if (!scoreText.enableAutoSizing)
+            {
+                scoreText.fontSizeMax = scoreText.fontSize;
+                scoreText.fontSizeMin = 16f;
+                scoreText.enableAutoSizing = true;
+            }
+            scoreText.text = s.ToString();
+        }
     }
 
     // The summary's menu button (labelled Next then) stops at the lesson first, when the case has one.

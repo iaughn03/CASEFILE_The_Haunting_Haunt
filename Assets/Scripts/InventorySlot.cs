@@ -162,6 +162,9 @@ public class InventorySlot : MonoBehaviour, IDropHandler
         GameObject tempSourceWorldObject =
             targetItem.sourceWorldObject;
 
+        GameObject tempInspectCopySource =
+            targetItem.inspectCopySource;
+
         // Target gets dragged item
 
         targetItem.itemName =
@@ -183,6 +186,9 @@ public class InventorySlot : MonoBehaviour, IDropHandler
 
         targetItem.sourceWorldObject =
             draggedItem.sourceWorldObject;
+
+        targetItem.inspectCopySource =
+            draggedItem.inspectCopySource;
 
         targetItem.sourceSlot = this;
 
@@ -207,6 +213,9 @@ public class InventorySlot : MonoBehaviour, IDropHandler
 
         draggedItem.sourceWorldObject =
             tempSourceWorldObject;
+
+        draggedItem.inspectCopySource =
+            tempInspectCopySource;
 
         draggedItem.parentAfterDrag =
             sourceSlot.transform;

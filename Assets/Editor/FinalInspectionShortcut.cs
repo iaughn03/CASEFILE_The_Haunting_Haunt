@@ -49,6 +49,8 @@ static class FinalInspectionShortcut
             intro.StopAllCoroutines();
             intro.SendMessage("EndIntro");
         }
+        // the case briefing follows the intro; skip it too
+        if (CaseFileUI.IsOpen) CaseFileUI.Instance.Close();
 
         // EvidenceManager calls the director's milestone scares directly as the count climbs; hidden
         // from FindFirstObjectByType while every clue lands at once, so no screamer fires mid-jump.

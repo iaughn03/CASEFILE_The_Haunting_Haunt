@@ -20,6 +20,9 @@ public class PlayerHealth : MonoBehaviour
     [TextArea]
     [Tooltip("Shown under YOU DIED when the ghost kills the player outright, before the case could be solved.")]
     public string killedByGhostSubtitle = "The case goes cold. The truth dies with you, and Grimwood keeps its secrets.";
+    [TextArea]
+    [Tooltip("Shown under YOU DIED when a fall (PlayerFallDamage) is what killed the player.")]
+    public string killedByFallSubtitle = "The fall was too far. The case goes cold, and the house keeps its secrets.";
     [Tooltip("Real-time delay before the death screen/pause kicks in, so the ghost's kill animation is actually visible instead of freezing instantly. Kept above the Kill clip's own length (1.8s) so the stab is never frozen mid-swing when the pause kicks in.")]
     public float deathAnimationDelay = 2f;
     [Tooltip("How long YouDiedPanel takes to fade in (its own CanvasGroup) once the collapse finishes, instead of just popping onto screen at full opacity.")]
@@ -100,6 +103,7 @@ public class PlayerHealth : MonoBehaviour
     private CharacterController characterController;
     private bool isDeathTransitioning; // guards Restart/Exit against double-clicks firing a second scene load
     private Transform killer; // whoever last hit us - used to frame the kill-cam on the finishing blow
+    private bool diedFromFall;
 
     void Start()
     {
@@ -159,6 +163,31 @@ public class PlayerHealth : MonoBehaviour
 
         if (currentHealth <= 0f)
         {
+            Die();
+        }
+    }
+
+    // Landing from a long drop (PlayerFallDamage). No claw marks and no kill-cam: nobody struck the
+    // blow, so a fatal fall goes straight to the collapse with its own line under YOU DIED.
+    public void TakeFallDamage(float amount)
+    {
+        if (IsDead) return;
+
+        killer = null;
+        lastHitTime = Time.time;
+        currentHealth = Mathf.Max(0f, currentHealth - amount);
+        Debug.Log($"Player took {amount:F0} fall damage, health now {currentHealth}/{maxHealth}");
+
+        PlayHurtSound();
+
+        if (playerMovement != null)
+        {
+            playerMovement.Shake(shakeDuration * 1.5f, shakeMagnitude * 1.5f);
+        }
+
+        if (currentHealth <= 0f)
+        {
+            diedFromFall = true;
             Die();
         }
     }
@@ -231,7 +260,7 @@ public class PlayerHealth : MonoBehaviour
         yield return StartCoroutine(PlayKillCam());
         yield return StartCoroutine(PlayCollapse());
 
-        if (deathSubtitleText != null) deathSubtitleText.text = killedByGhostSubtitle;
+        if (deathSubtitleText != null) deathSubtitleText.text = diedFromFall ? killedByFallSubtitle : killedByGhostSubtitle;
 
         // Paused/unlocked immediately (the world shouldn't keep moving once the body's hit the
         // floor) - the fade itself still plays smoothly afterward since it runs on unscaled time.

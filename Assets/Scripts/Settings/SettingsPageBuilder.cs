@@ -7,7 +7,8 @@ using UnityEngine.UI;
 // Builds the Display / Graphics / Controls / Keybinds settings pages at runtime by copying one
 // existing slider row (rowTemplate, e.g. Row_Brightness). Every scene's pages therefore match that
 // scene's own look, and adding an option is one line here instead of hand-built UI in four scenes.
-// Values live in GameSettings / GameKeys; this only shows and edits them.
+// Values live in GameSettings / GameKeys; this only shows and edits them. Nothing takes effect here:
+// SettingsApplyBar applies the edited values when the player presses APPLY.
 public class SettingsPageBuilder : MonoBehaviour
 {
     public enum Kind { Display, Graphics, Controls, Keybinds }
@@ -146,7 +147,8 @@ public class SettingsPageBuilder : MonoBehaviour
     {
         var list = GameSettings.AvailableResolutions();
         var s = new string[list.Count];
-        for (int i = 0; i < list.Count; i++) s[i] = list[i].x + " X " + list[i].y;
+        // named by height like video sizes (1080P, 720P) instead of "1920 X 1080" (user's request)
+        for (int i = 0; i < list.Count; i++) s[i] = list[i].y + "P";
         return s;
     }
 
@@ -273,7 +275,6 @@ public class SettingsPageBuilder : MonoBehaviour
         {
             set(v);
             if (value != null) value.text = format(v);
-            GameSettings.Commit();
         });
         refreshers.Add(() =>
         {
@@ -311,7 +312,6 @@ public class SettingsPageBuilder : MonoBehaviour
             if (skipLast && cur >= count) cur = dir > 0 ? -1 : count;   // from "Custom", step into the real presets
             int next = ((cur + dir) % count + count) % count;
             set(next);
-            GameSettings.Commit();
             RefreshEverything();
         };
         Arrow(row, "<", pos.x + 30f, value, () => step(-1));

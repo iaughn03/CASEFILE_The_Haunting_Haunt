@@ -49,6 +49,7 @@ public class PlayerMovement : MonoBehaviour
 
     private CharacterController controller;
     private PlayerVaultController vaultScript; // Reference to your vault script
+    private PlayerWindowClimb windowClimb;     // climbing through open windows (Game2 only)
     private Animator bodyAnimator; // drives the visible character's Idle/Walk/Run states
     private float verticalRotation = 0f;
     private Vector3 velocity;
@@ -126,6 +127,7 @@ public class PlayerMovement : MonoBehaviour
     {
         controller = GetComponent<CharacterController>();
         vaultScript = GetComponent<PlayerVaultController>(); // Link the scripts
+        windowClimb = GetComponent<PlayerWindowClimb>();
 
         standCenter = controller.center;
         // The player also carries a plain CapsuleCollider the same size as the controller. It has to
@@ -190,6 +192,9 @@ public class PlayerMovement : MonoBehaviour
         {
             return;
         }
+
+        // Same for a window climb: it drives the transform with the controller disabled.
+        if (windowClimb != null && windowClimb.IsClimbing) return;
 
         // No walking or looking around while the opening briefing is on screen.
         if (IntroSequence.IsPlaying) return;
@@ -310,9 +315,11 @@ public class PlayerMovement : MonoBehaviour
             bodyAnimator.SetLayerWeight(armStabilizeLayerIndex, newArmWeight);
         }
 
-        // 5. JUMPING - vaulting takes priority when there's an obstacle directly ahead
+        // 5. JUMPING - climbing through an open window, then vaulting, take priority over a plain jump
         if (GameKeys.Down(GameKeys.Action.Jump))
         {
+            // Like TryVault(), a climb disables the controller at once, so skip this frame's Move() below.
+            if (windowClimb != null && windowClimb.TryClimb()) return;
             bool vaulted = vaultScript != null && vaultScript.TryVault();
             // TryVault() disables the CharacterController the instant it starts a vault (so the vault
             // coroutine can move the transform directly) - continuing on into this same frame's gravity

@@ -121,12 +121,12 @@ public class MainMenu : MonoBehaviour
 
         if (brightnessSlider != null)
         {
-            brightnessSlider.onValueChanged.RemoveListener(SetBrightness);
+            brightnessSlider.onValueChanged.RemoveListener(PreviewBrightness);
             float savedBrightness = PlayerPrefs.GetFloat(BRIGHTNESS_PREF_KEY, 0.7f);
             brightnessSlider.value = savedBrightness;
             ApplyBrightness(savedBrightness);
             UpdatePercentText(brightnessText, savedBrightness);
-            brightnessSlider.onValueChanged.AddListener(SetBrightness);
+            brightnessSlider.onValueChanged.AddListener(PreviewBrightness);
         }
 
     }
@@ -183,17 +183,33 @@ public class MainMenu : MonoBehaviour
     }
 
     // Mirrors PauseManager.ResetSettings() - same defaults (1.0 for every volume, 0.7 for brightness).
+    // Volumes reset right away; brightness only moves its slider (it takes effect on APPLY).
     public void ResetSettings()
     {
         SetVolume(1f);
         SetMusicVolume(1f);
         SetSfxVolume(1f);
-        SetBrightness(0.7f);
 
         if (volumeSlider != null) volumeSlider.value = 1f;
         if (musicVolumeSlider != null) musicVolumeSlider.value = 1f;
         if (sfxVolumeSlider != null) sfxVolumeSlider.value = 1f;
         if (brightnessSlider != null) brightnessSlider.value = 0.7f;
+    }
+
+    // Volume sliders apply as they move. Brightness only updates its percentage until
+    // SettingsApplyBar applies or reverts it.
+    private void PreviewBrightness(float v) => UpdatePercentText(brightnessText, v);
+
+    public bool BrightnessPending => SettingsApplyBar.SliderDiffers(brightnessSlider, PlayerPrefs.GetFloat(BRIGHTNESS_PREF_KEY, 0.7f));
+
+    public void ApplyPendingBrightness()
+    {
+        if (brightnessSlider != null) SetBrightness(brightnessSlider.value);
+    }
+
+    public void RevertPendingBrightness()
+    {
+        SettingsApplyBar.ShowSlider(brightnessSlider, brightnessText, PlayerPrefs.GetFloat(BRIGHTNESS_PREF_KEY, 0.7f));
     }
 
     private void ApplyBrightness(float sliderValue)
@@ -223,6 +239,8 @@ public class MainMenu : MonoBehaviour
 
     public void CloseSettings()
     {
+        // Unapplied changes: ask to apply or discard first; the dialog comes back here once answered.
+        if (SettingsApplyBar.InterceptClose(settingsPanel, CloseSettings)) return;
         if (settingsPanel != null) settingsPanel.SetActive(false);
         ShowMainButtons();
     }

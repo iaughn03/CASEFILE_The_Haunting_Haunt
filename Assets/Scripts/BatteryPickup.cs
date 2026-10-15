@@ -20,7 +20,7 @@ public class BatteryPickup : MonoBehaviour
         FlashlightController flashlight = FindFirstObjectByType<FlashlightController>(FindObjectsInactive.Include);
         if (flashlight != null)
         {
-            flashlight.batteryLife = Mathf.Min(flashlight.maxBattery, flashlight.batteryLife + batteryRestoreAmount);
+            flashlight.AddBattery(batteryRestoreAmount);
         }
 
         if (pickupSound != null)

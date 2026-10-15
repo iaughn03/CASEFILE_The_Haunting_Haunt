@@ -15,12 +15,15 @@ public class SettingsResetHook : MonoBehaviour
             if (t != null) resetButton = t.GetComponent<Button>();
         }
         if (resetButton != null) resetButton.onClick.AddListener(ResetAll);
+        // APPLY button + confirmation, on every scene's Settings without touching the scenes
+        if (GetComponent<SettingsApplyBar>() == null) gameObject.AddComponent<SettingsApplyBar>();
     }
 
     public void ResetAll()
     {
-        GameSettings.ResetToDefaults();
-        GameKeys.ResetToDefaults();
+        // only edits the values; they take effect when APPLY is pressed
+        GameSettings.ResetToDefaults(false);
+        GameKeys.ResetToDefaults(false);
         SettingsPageBuilder.RefreshEverything();
     }
 }
