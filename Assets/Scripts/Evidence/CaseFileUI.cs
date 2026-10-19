@@ -34,13 +34,23 @@ public class CaseFileUI : MonoBehaviour
     public enum Tab { Briefing, People, Evidence, Guide }
 
     // ---- the Guide's three meanings (same wording as every Guide in the game) --------------------
+    // Philippine Revised Penal Code, Arts. 246, 248 and 249 (see FinalInspection.Verdict), in the order
+    // the law applies them: Parricide first, then Murder, and Homicide is whatever is left.
 
-    public const string HomicideMeaning = "Killing someone without planning it and without using unfair tricks or traps.";
-    public const string HomicideShort = "A sudden or unplanned killing of someone who is not family.";
-    public const string MurderMeaning = "Killing someone using planning, ambushes, poison, or cruel tricks so the victim cannot fight back.";
-    public const string MurderShort = "A calculated, sneaky, or cruel killing.";
-    public const string ParricideMeaning = "Killing your own direct blood relative (parent, child, grandparent) or legal husband or wife.";
-    public const string ParricideShort = "Killing a direct family member or legal spouse.";
+    public const string ParricideLaw = "Revised Penal Code, Art. 246";
+    public const string ParricideMeaning = "Killing your father, mother or child, any other direct ascendant or descendant (a grandparent or grandchild, for example), or your spouse.";
+    public const string ParricideShort = "The killer's relationship to the victim decides it, whatever the method.";
+    public const string MurderLaw = "Revised Penal Code, Art. 248";
+    public const string MurderMeaning = "A killing that is not parricide but has a qualifying circumstance, for example:\n\n"
+        + "Deciding ahead of time to kill and carrying it out (evident premeditation).\n"
+        + "Attacking so the victim cannot defend themselves (treachery).\n"
+        + "Using poison or fire.\n"
+        + "Killing for a reward.\n"
+        + "Cruelty.";
+    public const string MurderShort = "One qualifying circumstance is enough. A murder does not need all of them.";
+    public const string HomicideLaw = "Revised Penal Code, Art. 249";
+    public const string HomicideMeaning = "A killing that is neither parricide nor murder: the killer is not the victim's parent, child, other direct ascendant or descendant, or spouse, and there is no qualifying circumstance.";
+    public const string HomicideShort = "No family tie of that kind, and no qualifying circumstance.";
 
     // ---- documents read in the level that are not evidence --------------------------------------
 
@@ -397,16 +407,16 @@ public class CaseFileUI : MonoBehaviour
 
     private void BuildGuidePages()
     {
-        pages.Add(new Page { heading = "Homicide", sub = "Guide", body = HomicideMeaning + "\n\n<color=#7A2A1A>In short:</color> " + HomicideShort });
-        pages.Add(new Page { heading = "Murder", sub = "Guide", body = MurderMeaning + "\n\n<color=#7A2A1A>In short:</color> " + MurderShort });
-        pages.Add(new Page { heading = "Parricide", sub = "Guide", body = ParricideMeaning + "\n\n<color=#7A2A1A>In short:</color> " + ParricideShort });
+        pages.Add(GuidePage("Parricide", ParricideLaw, ParricideMeaning, ParricideShort));
+        pages.Add(GuidePage("Murder", MurderLaw, MurderMeaning, MurderShort));
+        pages.Add(GuidePage("Homicide", HomicideLaw, HomicideMeaning, HomicideShort));
         pages.Add(new Page
         {
             heading = "Quick Comparison",
-            sub = "Guide",
-            body = "<color=#7A2A1A>Homicide</color> = Unplanned, by a stranger or friend\n\n"
-                 + "<color=#7A2A1A>Murder</color> = Planned or sneaky, by a stranger or friend\n\n"
-                 + "<color=#7A2A1A>Parricide</color> = Any method, by direct family or a spouse"
+            sub = "Guide, Revised Penal Code",
+            body = "<color=#7A2A1A>Parricide</color> (Art. 246) = the killer is the victim's father, mother, child, other direct ascendant or descendant, or spouse. Any method.\n\n"
+                 + "<color=#7A2A1A>Murder</color> (Art. 248) = not parricide, but with a qualifying circumstance: evident premeditation, treachery, poison, fire, a reward, or cruelty.\n\n"
+                 + "<color=#7A2A1A>Homicide</color> (Art. 249) = neither parricide nor murder."
         });
 
         if (story != null && !string.IsNullOrWhiteSpace(story.rulingWhy))
@@ -423,6 +433,13 @@ public class CaseFileUI : MonoBehaviour
             });
         }
     }
+
+    private static Page GuidePage(string term, string law, string meaning, string inShort) => new Page
+    {
+        heading = term,
+        sub = "Guide",
+        body = "<color=#7A2A1A>" + law + "</color>\n\n" + meaning + "\n\n<color=#7A2A1A>In short:</color> " + inShort
+    };
 
     // ---- building the panel ----------------------------------------------------------------------
 

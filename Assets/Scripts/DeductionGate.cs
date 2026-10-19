@@ -3,17 +3,17 @@ using TMPro;
 using System.Collections;
 using System.Collections.Generic;
 
-// Attached alongside DoorController on the Map 1 exit door. Once all evidence has been collected,
-// interacting with this door no longer opens it normally - instead it presents the "Homicide,
-// Murder, or Parricide" choice that decides the ending. PlayerInteract.HandleInteraction() checks
-// for this component first and, if present, routes the door's interaction entirely through here.
-//
-// The three options are deliberately defined in-game rather than left to real-world legal
-// terminology, since "murder" and "homicide" are near-synonyms otherwise and the choice would
-// stop being meaningful:
-//   Murder    - deliberately killed by someone close to him, covering their tracks   (correct)
-//   Homicide  - killed by a stranger, no personal motive                             (wrong)
-//   Parricide - killed by his own child                                              (wrong)
+// Attached alongside DoorController on each level's exit (Game1 Main Door, Level2/Level3 exit points).
+// PlayerInteract.HandleInteraction() checks for this component first: until every clue is found it
+// shows ProgressText, and once HasAllEvidence is true the interaction opens the Final Inspection.
+// The older three card choice below (OpenChoice/ChooseMurder/...) only runs in a scene without a
+// FinalInspection, which no level has any more; its texts still follow the Philippine Revised
+// Penal Code like the rest of the game:
+//   Parricide (Art. 246) - the killer is the victim's father, mother, child, other direct ascendant or
+//                          descendant, or spouse
+//   Murder    (Art. 248) - not parricide, but with a qualifying circumstance (evident premeditation,
+//                          treachery, poison, fire, a reward, cruelty)
+//   Homicide  (Art. 249) - neither of the above
 public class DeductionGate : MonoBehaviour
 {
     [Header("Evidence Requirement")]
@@ -37,26 +37,20 @@ public class DeductionGate : MonoBehaviour
     [Header("Wrong-Answer Explanations")]
     [Tooltip("Shown on the game-over panel so a wrong guess still teaches the player what they missed, instead of just reusing the same generic 'YOU DIED' text for every wrong answer.")]
     public TextMeshProUGUI gameOverSubtitleText;
-    // Source: Bureau of Justice Statistics, "Homicide Victimization in the United States, 2023" -
-    // most homicide victims are killed by someone they knew, not a stranger.
     [TextArea]
-    public string homicideWrongReason = "A stranger with no motive wouldn't stage a suicide, force a fake note, or wear an asylum uniform. Whoever did this had access, a reason, and something to protect. It tracks with how these cases actually break down too: most homicide victims are killed by someone they know, not a stranger passing through.";
-    // Source: Kathleen M. Heide's parricide research (via EBSCO Research Starters) - child-kills-parent
-    // cases make up roughly 1% of U.S. homicides, and most trace back to documented abuse or
-    // untreated mental illness rather than a hidden institutional cover-up.
+    public string homicideWrongReason = HomicideWrongDefault;
     [TextArea]
-    public string parricideWrongReason = "A grim theory, but nothing ties his death to family. The torn uniform and the coerced note point to someone paid to protect the asylum's secrets, not a child's revenge. It's also the statistical long shot: cases where a child kills a parent make up only about 1% of U.S. homicides, and most of those trace back to years of documented abuse or untreated mental illness, not a hidden institutional cover up like this one.";
+    public string parricideWrongReason = ParricideWrongDefault;
+
+    public const string HomicideWrongDefault = "Homicide (Revised Penal Code, Art. 249) is only a killing that is neither parricide nor murder. Check the evidence again for a family tie to the victim, or for a qualifying circumstance such as deciding ahead of time to kill and carrying it out, or attacking so the victim cannot defend themselves.";
+    public const string ParricideWrongDefault = "Parricide (Revised Penal Code, Art. 246) needs the killer to be the victim's father, mother, child, other direct ascendant or descendant, or spouse. Check again how the person you suspect is related to the victim.";
+    public const string CaseClosedDefault = "Case closed. The ruling follows the Revised Penal Code: Parricide (Art. 246) when the killer is the victim's father, mother, child, other direct ascendant or descendant, or spouse; otherwise Murder (Art. 248) when there is a qualifying circumstance such as evident premeditation or treachery; otherwise Homicide (Art. 249).";
 
     [Header("Case Closed Debrief")]
     [Tooltip("Optional direct reference - leave empty and it's found by name under victoryPanel instead. Kept as an explicit override slot rather than the only way to wire it because victoryPanel/DeductionGate live in different scenes (Game1 vs Game3): Unity doesn't reliably persist a direct cross-scene reference assigned here, so ChooseMurder() falls back to victoryPanel.transform.Find(\"CaseClosedDebrief\") at runtime instead.")]
     public TextMeshProUGUI caseClosedDebriefText;
-    // Sources: Bureau of Justice Statistics, "Homicide Victimization in the United States, 2023"
-    // (most homicide victims are killed by someone they know) and Kathleen M. Heide's parricide
-    // research via EBSCO Research Starters (child-kills-parent cases are ~1% of U.S. homicides,
-    // almost always tied to documented abuse) - the same two sources behind homicideWrongReason
-    // and parricideWrongReason above, cited here to explain why Murder was the supported call.
     [TextArea]
-    public string caseClosedDebrief = "Case closed. The evidence trail (coercion, staging, concealment) fits the far more common pattern behind killings like this: BJS's 2023 homicide data shows most victims are killed by someone they know, not a stranger, which is exactly why Homicide was the wrong call here. And it rules out the theory that seems most shocking: Heide's parricide research (EBSCO) puts child on parent killings at roughly 1% of U.S. homicides, almost always tied to years of documented abuse, not an institutional cover up like this one. Someone close to Dr. Vance, with something to protect, planned this and staged the rest.";
+    public string caseClosedDebrief = CaseClosedDefault;
 
     [Header("Choice Reveal Animation")]
     [Tooltip("The panel's own backdrop/scrim CanvasGroup - fades in first, together with the title punching into place.")]

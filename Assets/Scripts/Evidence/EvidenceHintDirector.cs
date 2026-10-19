@@ -12,11 +12,11 @@ public class EvidenceHintDirector : MonoBehaviour
     public float hintPulseSeconds = 30f;
 
     [Header("Late-unlock announcement - one clue that only becomes findable partway through, called\n     out once so the player knows to go back for it. Leave the name empty to disable.")]
-    [Tooltip("EvidenceData.displayName of the clue to announce. Level 1: \"Autopsy Report Draft\". Level 2: the autopsy summary.")]
-    public string announceItemDisplayName = "Autopsy Report Draft";
+    [Tooltip("EvidenceData.displayName of the clue to announce. Level 1: \"Physician's Preliminary Notes\". Level 2: the autopsy summary.")]
+    public string announceItemDisplayName = "Physician's Preliminary Notes";
     [Tooltip("Announce once the player is holding this many required clues.")]
     public int announceAfterCollected = 3;
-    [TextArea(1, 3)] public string announceMessage = "The draft autopsy report should be ready in the office.";
+    [TextArea(1, 3)] public string announceMessage = "The on call physician's preliminary notes should be ready in the office.";
 
     private EvidenceManager evidence;
     private ObjectiveTracker tracker;

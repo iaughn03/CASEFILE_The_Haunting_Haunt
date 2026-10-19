@@ -383,8 +383,8 @@ void Update()
         {
             if (hit.distance <= door.interactionRange)
             {
-                // The Map 1 exit door swaps its normal open/unlock behavior for the
-                // Suicide-or-Homicide ending choice once all evidence has been found.
+                // Each level's exit swaps its normal open/unlock behavior for the end of the
+                // case once all evidence has been found.
                 if (door.TryGetComponent<DeductionGate>(out DeductionGate gate))
                 {
                     if (gate.HasAllEvidence)
@@ -393,14 +393,10 @@ void Update()
 
                         if (GameKeys.Down(GameKeys.Action.Interact))
                         {
-                            // Classification quiz (if present) runs first and opens the whodunit
-                            // choice itself once answered - see CaseClassificationQuiz.Open()/Proceed().
-                            // Level 1's case ends in the Final Inspection (case wall, ruling, accusation,
-                            // signed report, ending).
+                            // Every level's case ends in the Final Inspection (case wall, accusation,
+                            // ruling, signed report, ending); the gate's own old choice is the fallback.
                             if (FinalInspection.Instance != null)
                                 FinalInspection.Instance.Open();
-                            else if (door.TryGetComponent<CaseClassificationQuiz>(out CaseClassificationQuiz quiz))
-                                quiz.Open();
                             else
                                 gate.OpenChoice();
                         }
