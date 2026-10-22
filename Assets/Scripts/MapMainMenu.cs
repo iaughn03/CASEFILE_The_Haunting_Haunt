@@ -12,6 +12,10 @@ public class MapMainMenu : MonoBehaviour
     public GameObject firstMapDiffPanel;  // Your 1st map panel ("0" / Asylum)
     public GameObject secondMapDiffPanel; // Your 2ndMapDiffPanel
 
+    [Header("Keyboard / Controller")]
+    [Tooltip("Nothing is selected when the screen opens, so no card looks picked. The first arrow, D-pad, stick or Tab press selects this card (the first case) so keyboard and controller players can start from it.")]
+    public GameObject firstCard;
+
     [Header("Hover Settings")]
     [Tooltip("The scale the button will expand to when hovered (e.g., 1.1f = 110% size)")]
     public float hoverScaleMultiplier = 1.1f;
@@ -30,6 +34,17 @@ public class MapMainMenu : MonoBehaviour
             animator.Rebind();
             animator.Update(0f);
         }
+    }
+
+    private void Update()
+    {
+        var es = EventSystem.current;
+        if (firstCard == null || es == null || es.currentSelectedGameObject != null || !firstCard.activeInHierarchy) return;
+
+        bool navigate =
+            Mathf.Abs(Input.GetAxisRaw("Horizontal")) > 0.5f || Mathf.Abs(Input.GetAxisRaw("Vertical")) > 0.5f ||
+            Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+        if (navigate) es.SetSelectedGameObject(firstCard);
     }
 
     // 1. Call this for your 1st Map Button (Asylum)
