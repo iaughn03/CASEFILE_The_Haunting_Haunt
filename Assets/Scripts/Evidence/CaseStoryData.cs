@@ -12,6 +12,8 @@ public class CaseStoryData : ScriptableObject
         public string name;
         [Tooltip("Who they are to the victim, one line.")]
         public string relation;
+        [Tooltip("Why the police noted them, shown under the relation as \"Why they're on file\". Keep every person's reason about equally suspicious so the killer does not stand out, and name nothing the player only learns from evidence.")]
+        [TextArea(2, 4)] public string whyOnFile;
         [Tooltip("Plain facts about them the investigator has on file: age, job, keys, build, where they were.")]
         [TextArea(3, 10)] public string profile;
         [Tooltip("What they told the police, in their own words. A claim, not a fact: the evidence confirms or breaks it.")]
@@ -19,6 +21,14 @@ public class CaseStoryData : ScriptableObject
         public Sprite portrait;
         [Tooltip("Left empty, the person is in the file from the start. Otherwise they appear once any of these clues is in the bag.")]
         public EvidenceData[] revealedBy;
+
+        [Header("Follow up (added under the statement once the player finds what contradicts it)")]
+        [Tooltip("Any of these clues in the bag adds the follow up.")]
+        public EvidenceData[] followUpAfter;
+        [Tooltip("Titles of ReadableNotes (documents read on site, not evidence); reading any of them adds the follow up.")]
+        public string[] followUpAfterDocuments;
+        [Tooltip("What they say when shown the clue or document, in their own words. A claim, not a fact.")]
+        [TextArea(2, 6)] public string followUp;
     }
 
     [Tooltip("Scene this case belongs to; the Guide's case page unlocks once LevelProgress marks it solved.")]

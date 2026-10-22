@@ -6,7 +6,8 @@ using UnityEngine.UI;
 
 // The Case File: everything the investigator knows about the case, readable at any time.
 //   Briefing  - victim, where and when found, what the police first thought, the task
-//   People    - everyone in the file: who they are to the victim, facts on record, their statement
+//   People    - everyone in the file: who they are to the victim, why the police noted them, facts on
+//               record, their statement, and a follow up once the player finds what contradicts it
 //   Evidence  - every clue in the bag (observation, what it could mean, the document's text) plus any
 //               witness documents read in the level that are not evidence
 //   Guide     - the three rulings in plain words, and this case's own page once it is solved
@@ -55,13 +56,27 @@ public class CaseFileUI : MonoBehaviour
     // ---- documents read in the level that are not evidence --------------------------------------
 
     private static readonly List<ReadableNote> documents = new List<ReadableNote>();
+    // people whose follow up statement the player has already seen on their page
+    private static readonly HashSet<string> seenFollowUps = new HashSet<string>();
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-    private static void ResetStatics() => documents.Clear();
+    private static void ResetStatics()
+    {
+        documents.Clear();
+        seenFollowUps.Clear();
+    }
 
     public static void RegisterDocument(ReadableNote note)
     {
         if (note != null && !documents.Contains(note)) documents.Add(note);
+    }
+
+    public static bool HasReadDocument(string title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return false;
+        foreach (var doc in documents)
+            if (doc != null && doc.title == title) return true;
+        return false;
     }
 
     // The bag's detail panel text for a clue: the neutral observation, then the clue note under it.
@@ -79,6 +94,7 @@ public class CaseFileUI : MonoBehaviour
         public string heading, sub, body;
         public Sprite image;
         public EvidenceData clue;
+        public CaseStoryData.Person person;
     }
 
     private GameObject canvasRoot;
@@ -252,6 +268,7 @@ public class CaseFileUI : MonoBehaviour
     {
         UpdateFinalInspectionButtons();
         UpdateBagTab();
+        UpdateNewMarks();
 
         if (!IsOpen) return;
         if (Time.unscaledTime - openedAt < 0.4f) return; // a key held from the intro must not skip the briefing
@@ -292,6 +309,7 @@ public class CaseFileUI : MonoBehaviour
         if (pages.Count == 0) return;
         pageIndex = Mathf.Clamp(index, 0, pages.Count - 1);
         Page p = pages[pageIndex];
+        if (p.person != null && HasFollowUp(p.person)) seenFollowUps.Add(p.person.name);
 
         bool hasImage = p.image != null;
         pageImage.gameObject.SetActive(hasImage);
@@ -348,13 +366,20 @@ public class CaseFileUI : MonoBehaviour
         {
             if (person == null || !IsRevealed(person)) continue;
             var sb = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(person.whyOnFile))
+                sb.Append("<color=#7A2A1A>Why they're on file</color>\n").Append(person.whyOnFile.Trim()).Append("\n\n");
             if (!string.IsNullOrWhiteSpace(person.profile)) sb.Append(person.profile.Trim());
             if (!string.IsNullOrWhiteSpace(person.statement))
             {
                 if (sb.Length > 0) sb.Append("\n\n");
                 sb.Append("<color=#7A2A1A>Statement</color>\n<i>").Append(person.statement.Trim()).Append("</i>");
             }
-            pages.Add(new Page { heading = person.name, sub = person.relation, body = sb.ToString(), image = person.portrait });
+            bool followUp = HasFollowUp(person);
+            if (followUp)
+                sb.Append("\n\n<color=#7A2A1A>Follow up</color>\n<i>").Append(person.followUp.Trim()).Append("</i>");
+            string sub = person.relation;
+            if (followUp && !seenFollowUps.Contains(person.name)) sub += "   <color=#7A2A1A>New follow up</color>";
+            pages.Add(new Page { heading = person.name, sub = sub, body = sb.ToString(), image = person.portrait, person = person });
         }
         if (pages.Count == 0) pages.Add(new Page { heading = "No one yet", body = "Nobody is in the file yet." });
     }
@@ -364,6 +389,28 @@ public class CaseFileUI : MonoBehaviour
         if (person.revealedBy == null || person.revealedBy.Length == 0) return true;
         foreach (var data in person.revealedBy)
             if (data != null && CaseFile.IsInBag(data.displayName)) return true;
+        return false;
+    }
+
+    // The follow up shows once any of its clues is in the bag or any of its documents has been read.
+    private static bool HasFollowUp(CaseStoryData.Person person)
+    {
+        if (person == null || string.IsNullOrWhiteSpace(person.followUp)) return false;
+        if (person.followUpAfter != null)
+            foreach (var data in person.followUpAfter)
+                if (data != null && CaseFile.IsInBag(data.displayName)) return true;
+        if (person.followUpAfterDocuments != null)
+            foreach (var title in person.followUpAfterDocuments)
+                if (HasReadDocument(title)) return true;
+        return false;
+    }
+
+    // True while someone in the file has a follow up the player has not opened their page for yet.
+    private bool HasUnseenFollowUp()
+    {
+        if (story == null || story.persons == null) return false;
+        foreach (var person in story.persons)
+            if (person != null && IsRevealed(person) && HasFollowUp(person) && !seenFollowUps.Contains(person.name)) return true;
         return false;
     }
 
@@ -561,6 +608,10 @@ public class CaseFileUI : MonoBehaviour
         Anchor(closeButton, new Vector2(1f, 0f));
         closeLabel = closeButton.GetComponentInChildren<TMP_Text>(true);
 
+        // the People tab is new, so let the next check mark it if a follow up is waiting
+        newMarkShown = false;
+        nextNewMarkCheck = 0f;
+
         canvasRoot.SetActive(false);
     }
 
@@ -700,6 +751,37 @@ public class CaseFileUI : MonoBehaviour
     {
         if (bagTabButton == null) return;
         bagTabButton.interactable = !IsOpen;
+    }
+
+    // ---- "NEW" on the bag tab and the People tab while a follow up is unread ------------------------
+
+    private const string NewMark = " <color=#E0B860>NEW</color>";
+    private bool newMarkShown;
+    private float nextNewMarkCheck;
+
+    private void UpdateNewMarks()
+    {
+        if (Time.unscaledTime < nextNewMarkCheck) return;
+        nextNewMarkCheck = Time.unscaledTime + 0.25f;
+        bool unseen = HasUnseenFollowUp();
+        if (unseen == newMarkShown) return;
+        newMarkShown = unseen;
+        SetMarkedLabel(bagTabButton, "Case File", unseen);
+        SetMarkedLabel(tabButtons[(int)Tab.People], "People", unseen);
+    }
+
+    private static void SetMarkedLabel(Button b, string label, bool marked)
+    {
+        if (b == null) return;
+        var t = b.GetComponentInChildren<TMP_Text>(true);
+        if (t == null) return;
+        if (!t.enableAutoSizing)
+        {
+            t.fontSizeMax = t.fontSize;
+            t.fontSizeMin = 18f;
+            t.enableAutoSizing = true;
+        }
+        t.text = marked ? label + NewMark : label;
     }
 
     // ---- buttons on the Final Inspection ----------------------------------------------------------
